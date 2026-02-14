@@ -193,6 +193,10 @@ class Registration {
             createdAt: this.createdAt,
             updatedAt: this.updatedAt
         };
+        if (this.discountCode)
+            base.discountCode = this.discountCode;
+        if (this.discountAmount !== undefined)
+            base.discountAmount = this.discountAmount;
         if (this.status)
             base.status = this.status;
         if (this.cancellationReason)

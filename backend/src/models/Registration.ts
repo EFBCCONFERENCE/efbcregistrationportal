@@ -280,6 +280,9 @@ export class Registration {
       createdAt: this.createdAt,
       updatedAt: this.updatedAt
     };
+    
+    if (this.discountCode) (base as any).discountCode = this.discountCode;
+    if (this.discountAmount !== undefined) (base as any).discountAmount = this.discountAmount;
     if (this.status) (base as any).status = this.status;
     if (this.cancellationReason) (base as any).cancellationReason = this.cancellationReason;
     if (this.cancellationAt) (base as any).cancellationAt = this.cancellationAt;
