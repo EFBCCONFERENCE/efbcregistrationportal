@@ -76,6 +76,12 @@ export class Registration {
   public groupAssigned?: number;
   public discountCode?: string;
   public discountAmount?: number;
+  // Pricing tier tracking (labels + first-added timestamps for spouse/kids)
+  public registrationTierLabel?: string;
+  public spouseTierLabel?: string;
+  public spouseAddedAt?: string;
+  public kidsTierLabel?: string;
+  public kidsAddedAt?: string;
   public originalTotalPrice?: number;
   public paidAmount?: number;
   public pendingPaymentAmount?: number;
@@ -168,6 +174,11 @@ export class Registration {
     this.kidsTotalPrice = (data as any).kidsTotalPrice ?? undefined;
     this.discountCode = (data as any).discountCode;
     this.discountAmount = (data as any).discountAmount ?? undefined;
+    this.registrationTierLabel = (data as any).registrationTierLabel ?? (data as any).registration_tier_label ?? undefined;
+    this.spouseTierLabel = (data as any).spouseTierLabel ?? (data as any).spouse_tier_label ?? undefined;
+    this.spouseAddedAt = (data as any).spouseAddedAt ?? (data as any).spouse_added_at ?? undefined;
+    this.kidsTierLabel = (data as any).kidsTierLabel ?? (data as any).kids_tier_label ?? undefined;
+    this.kidsAddedAt = (data as any).kidsAddedAt ?? (data as any).kids_added_at ?? undefined;
     this.childFirstName = (data as any).childFirstName;
     this.childLastName = (data as any).childLastName;
     const clt: any = (data as any).childLunchTicket;
@@ -283,6 +294,11 @@ export class Registration {
     
     if (this.discountCode) (base as any).discountCode = this.discountCode;
     if (this.discountAmount !== undefined) (base as any).discountAmount = this.discountAmount;
+    if (this.registrationTierLabel) (base as any).registrationTierLabel = this.registrationTierLabel;
+    if (this.spouseTierLabel) (base as any).spouseTierLabel = this.spouseTierLabel;
+    if (this.spouseAddedAt) (base as any).spouseAddedAt = this.spouseAddedAt;
+    if (this.kidsTierLabel) (base as any).kidsTierLabel = this.kidsTierLabel;
+    if (this.kidsAddedAt) (base as any).kidsAddedAt = this.kidsAddedAt;
     if (this.status) (base as any).status = this.status;
     if (this.cancellationReason) (base as any).cancellationReason = this.cancellationReason;
     if (this.cancellationAt) (base as any).cancellationAt = this.cancellationAt;
@@ -366,6 +382,11 @@ export class Registration {
       kids_total_price: this.kidsTotalPrice ?? null,
       discount_code: this.nullIfUndefined(this.discountCode),
       discount_amount: this.discountAmount ?? 0,
+      registration_tier_label: this.nullIfUndefined(this.registrationTierLabel),
+      spouse_tier_label: this.nullIfUndefined(this.spouseTierLabel),
+      spouse_added_at: this.spouseAddedAt ? this.formatDateForDB(this.spouseAddedAt) : null,
+      kids_tier_label: this.nullIfUndefined(this.kidsTierLabel),
+      kids_added_at: this.kidsAddedAt ? this.formatDateForDB(this.kidsAddedAt) : null,
       child_first_name: this.nullIfUndefined(this.childFirstName),
       child_last_name: this.nullIfUndefined(this.childLastName),
       child_lunch_ticket: this.childLunchTicket ?? false,
@@ -491,6 +512,11 @@ export class Registration {
       kidsTotalPrice: row.kids_total_price ?? undefined,
       discountCode: row.discount_code,
       discountAmount: row.discount_amount ?? undefined,
+      registrationTierLabel: row.registration_tier_label ?? undefined,
+      spouseTierLabel: row.spouse_tier_label ?? undefined,
+      spouseAddedAt: row.spouse_added_at ?? undefined,
+      kidsTierLabel: row.kids_tier_label ?? undefined,
+      kidsAddedAt: row.kids_added_at ?? undefined,
       childFirstName: row.child_first_name,
       childLastName: row.child_last_name,
       childLunchTicket: !!row.child_lunch_ticket,

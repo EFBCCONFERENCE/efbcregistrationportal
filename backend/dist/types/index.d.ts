@@ -81,6 +81,11 @@ export interface Registration {
     massageTimeSlot?: string;
     pickleballEquipment?: boolean;
     spouseBreakfast?: boolean;
+    registrationTierLabel?: string;
+    spouseTierLabel?: string;
+    spouseAddedAt?: string;
+    kidsTierLabel?: string;
+    kidsAddedAt?: string;
     wednesdayReception: 'I will attend' | 'I will NOT attend';
     thursdayBreakfast: 'I will attend' | 'I will NOT attend';
     thursdayLunch: 'I will attend' | 'I will NOT attend';

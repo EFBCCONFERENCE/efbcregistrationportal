@@ -263,6 +263,12 @@ useEffect(() => {
         kidsPaidAt: r.kidsPaidAt ?? r.kids_paid_at,
         discountCode: r.discountCode ?? r.discount_code,
         discountAmount: r.discountAmount ?? r.discount_amount ?? undefined,
+        // Tier tracking (optional)
+        registrationTierLabel: r.registrationTierLabel ?? r.registration_tier_label ?? undefined,
+        spouseTierLabel: r.spouseTierLabel ?? r.spouse_tier_label ?? undefined,
+        spouseAddedAt: r.spouseAddedAt ?? r.spouse_added_at ?? undefined,
+        kidsTierLabel: r.kidsTierLabel ?? r.kids_tier_label ?? undefined,
+        kidsAddedAt: r.kidsAddedAt ?? r.kids_added_at ?? undefined,
         groupAssigned: r.groupAssigned ?? r.group_assigned ?? undefined,
         // Pending Payment
         originalTotalPrice: r.originalTotalPrice ?? r.original_total_price ?? undefined,

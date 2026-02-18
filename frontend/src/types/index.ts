@@ -88,6 +88,13 @@ export interface Registration {
   clubRentals?: string;
   massageTimeSlot?: '8:00 AM- 10:00 AM' | '10:00 AM - 12:00 PM' | '12:00 PM - 2:00 PM' | '2:00 PM - 4:00 PM';
   pickleballEquipment?: boolean;
+
+  // Pricing tier tracking (optional; used for reporting/export)
+  registrationTierLabel?: string;
+  spouseTierLabel?: string;
+  spouseAddedAt?: string;
+  kidsTierLabel?: string;
+  kidsAddedAt?: string;
   
   // Conference Meals
   wednesdayReception: 'I will attend' | 'I will NOT attend';

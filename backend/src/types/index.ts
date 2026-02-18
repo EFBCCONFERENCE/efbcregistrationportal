@@ -77,6 +77,13 @@ export interface Registration {
   massageTimeSlot?: string;
   pickleballEquipment?: boolean;
   spouseBreakfast?: boolean;
+
+  // Pricing tier tracking (stored server-side)
+  registrationTierLabel?: string;
+  spouseTierLabel?: string;
+  spouseAddedAt?: string;
+  kidsTierLabel?: string;
+  kidsAddedAt?: string;
   
   // Conference Meals
   wednesdayReception: 'I will attend' | 'I will NOT attend';

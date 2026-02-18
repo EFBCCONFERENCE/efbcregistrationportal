@@ -345,6 +345,14 @@ export class RegistrationController {
           };
           const base = pick(regTiers);
           const spouse = registration.spouseDinnerTicket ? pick(spouseTiers) : null;
+          
+          // Store pricing tier labels (for reporting/export) using the tier active at submission time
+          (registration as any).registrationTierLabel = (base as any)?.label || (base as any)?.name || undefined;
+          if (registration.spouseDinnerTicket) {
+            (registration as any).spouseTierLabel = (spouse as any)?.label || (spouse as any)?.name || undefined;
+            // For spouse, track when it was first added (on create it's the submission time)
+            (registration as any).spouseAddedAt = (registration as any).spouseAddedAt || registration.createdAt;
+          }
           let total = 0;
           if (base && typeof base.price==='number') total += base.price; else total += Number(ev.default_price || 0);
           if (spouse && typeof spouse.price==='number') total += spouse.price;
@@ -354,6 +362,9 @@ export class RegistrationController {
           const kidsTiers: any[] = parseJson(ev.kids_pricing);
           const kidsActive = pick(kidsTiers);
           if (registration.kids && registration.kids.length > 0) {
+            (registration as any).kidsTierLabel = (kidsActive as any)?.label || (kidsActive as any)?.name || undefined;
+            // For kids, track when they were first added (on create it's the submission time)
+            (registration as any).kidsAddedAt = (registration as any).kidsAddedAt || registration.createdAt;
             const pricePerKid = kidsActive?.price ?? 0;
             total += pricePerKid * registration.kids.length;
           }
@@ -605,6 +616,8 @@ export class RegistrationController {
         spousePaidAt: 'spouse_paid_at',
         discountCode: 'discount_code',
         discountAmount: 'discount_amount',
+        kids: 'kids_data',
+        kidsTotalPrice: 'kids_total_price',
       };
       
       // Build update payload by mapping fields and converting values
@@ -640,7 +653,16 @@ export class RegistrationController {
           }
           
           // Handle special conversions
-          if (camelKey === 'spouseDinnerTicket') {
+          if (camelKey === 'kids') {
+            // Store kids array in JSON column
+            if (Array.isArray(value) && value.length > 0) {
+              value = JSON.stringify(value);
+            } else {
+              value = null;
+            }
+          } else if (camelKey === 'kidsTotalPrice') {
+            value = value !== null && value !== undefined ? Number(value) : null;
+          } else if (camelKey === 'spouseDinnerTicket') {
             value = value === true || value === 'Yes' || value === 'yes' || value === 1 ? 1 : 0;
           } else if (camelKey === 'isFirstTimeAttending' || camelKey === 'spouseBreakfast' || camelKey === 'paid') {
             value = value === true || value === 1 ? 1 : 0;
@@ -653,6 +675,53 @@ export class RegistrationController {
           
           dbPayload[dbKey] = value;
         }
+      }
+
+      // Pricing tier tracking for spouse/kids (do NOT rely on paid_at; use "first added" timestamps)
+      try {
+        const oldSpouseTicket = !!existingRow.spouse_dinner_ticket;
+        const newSpouseTicketRaw = updateDataObj.spouseDinnerTicket;
+        const newSpouseTicket = newSpouseTicketRaw !== undefined
+          ? (newSpouseTicketRaw === true || newSpouseTicketRaw === 'Yes' || newSpouseTicketRaw === 'yes' || newSpouseTicketRaw === 1)
+          : oldSpouseTicket;
+
+        const oldKidsData = existingRow.kids_data ? JSON.parse(existingRow.kids_data) : [];
+        const oldKidsCount = Array.isArray(oldKidsData) ? oldKidsData.length : 0;
+        const newKids = updateDataObj.kids;
+        const newKidsCount = Array.isArray(newKids) ? newKids.length : oldKidsCount;
+
+        const shouldSetSpouseFirstAdded = !oldSpouseTicket && newSpouseTicket && !existingRow.spouse_added_at;
+        const shouldSetKidsFirstAdded = oldKidsCount === 0 && newKidsCount > 0 && !existingRow.kids_added_at;
+
+        if (shouldSetSpouseFirstAdded || shouldSetKidsFirstAdded) {
+          const ev: any = await this.db.findById('events', existingRow.event_id);
+          const parseJson = (v: any) => { try { return JSON.parse(v || '[]'); } catch { return []; } };
+          const now = getCurrentEasternTime();
+          const pick = (tiers: any[]) => {
+            const mapped = (tiers || []).map(t => ({
+              ...t,
+              s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
+              e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
+            }));
+            return mapped.find((t: any) => now >= t.s && now < t.e) || mapped[mapped.length - 1] || null;
+          };
+
+          const nowDb = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+          if (shouldSetSpouseFirstAdded) {
+            const spouseTier = ev ? pick(parseJson(ev.spouse_pricing)) : null;
+            dbPayload.spouse_added_at = nowDb;
+            dbPayload.spouse_tier_label = (spouseTier as any)?.label || (spouseTier as any)?.name || null;
+          }
+
+          if (shouldSetKidsFirstAdded) {
+            const kidsTier = ev ? pick(parseJson(ev.kids_pricing)) : null;
+            dbPayload.kids_added_at = nowDb;
+            dbPayload.kids_tier_label = (kidsTier as any)?.label || (kidsTier as any)?.name || null;
+          }
+        }
+      } catch (e) {
+        // Best-effort; don't fail the update if tier tracking can't be computed
       }
 
       // Apply computed waitlist status if activity changed.

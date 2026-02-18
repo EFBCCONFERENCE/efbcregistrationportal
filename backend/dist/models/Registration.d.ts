@@ -82,6 +82,11 @@ export declare class Registration {
     groupAssigned?: number;
     discountCode?: string;
     discountAmount?: number;
+    registrationTierLabel?: string;
+    spouseTierLabel?: string;
+    spouseAddedAt?: string;
+    kidsTierLabel?: string;
+    kidsAddedAt?: string;
     originalTotalPrice?: number;
     paidAmount?: number;
     pendingPaymentAmount?: number;

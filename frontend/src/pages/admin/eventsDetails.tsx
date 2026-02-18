@@ -4,6 +4,58 @@ import { getActivityNames, getActivitySeatLimit } from '../../utils/eventUtils';
 import { formatDateShort } from '../../utils/dateUtils';
 import apiClient from '../../services/apiClient';
 import { Modal } from '../../components/Modal';
+import * as XLSX from 'xlsx';
+
+type PricingTier = { label?: string; price?: number; startDate?: string; endDate?: string };
+
+const getEasternYmd = (dateValue?: any): string => {
+  if (!dateValue) return '';
+  const d = new Date(dateValue);
+  if (isNaN(d.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const y = parts.find(p => p.type === 'year')?.value || '';
+  const m = parts.find(p => p.type === 'month')?.value || '';
+  const day = parts.find(p => p.type === 'day')?.value || '';
+  return y && m && day ? `${y}-${m}-${day}` : '';
+};
+
+const normalizeTierDate = (d?: string): string | null => {
+  if (!d) return null;
+  // Accept YYYY-MM-DD or ISO strings; keep just the date part for comparisons
+  const s = String(d).trim();
+  return s.length >= 10 ? s.slice(0, 10) : s;
+};
+
+const inferTierLabelFromDate = (tiersRaw: PricingTier[] | undefined, dateValue?: any): string => {
+  const tiers = Array.isArray(tiersRaw) ? tiersRaw : [];
+  if (tiers.length === 0) return 'N/A';
+
+  const ymd = getEasternYmd(dateValue);
+  if (!ymd) return 'N/A';
+
+  const mapped = tiers
+    .map(t => ({
+      label: t.label || 'N/A',
+      s: normalizeTierDate(t.startDate) || '0000-01-01',
+      e: normalizeTierDate(t.endDate) || '9999-12-31',
+    }))
+    .sort((a, b) => a.s.localeCompare(b.s));
+
+  const hit = mapped.find(t => ymd >= t.s && ymd <= t.e);
+  if (hit) return hit.label;
+
+  // If outside all ranges, clamp to nearest end.
+  const first = mapped[0];
+  const last = mapped[mapped.length - 1];
+  if (ymd < first.s) return first.label;
+  if (ymd > last.e) return last.label;
+  return 'N/A';
+};
 
 interface EventDetailsPageProps {
   event: Event;
@@ -23,6 +75,8 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
   const [discountCodes, setDiscountCodes] = useState<DiscountCode[]>([]);
   const [discountUsersCode, setDiscountUsersCode] = useState<DiscountCode | null>(null);
   const [discountUsersSearch, setDiscountUsersSearch] = useState('');
+  const [tierUsersModal, setTierUsersModal] = useState<{ type: 'Registration' | 'Spouse' | 'Children'; label: string } | null>(null);
+  const [tierUsersSearch, setTierUsersSearch] = useState('');
   const [waitlistActivity, setWaitlistActivity] = useState<string | null>(null);
   const [waitlistSearch, setWaitlistSearch] = useState('');
   const [promoteLoadingId, setPromoteLoadingId] = useState<number | null>(null);
@@ -106,6 +160,186 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
           (a.firstName || '').localeCompare(b.firstName || '')
       );
   }, [discountUsersCode, discountUsersSearch, registrations, event.id]);
+
+  // ---------- Pricing tier users (Registration / Spouse / Children) ----------
+  const registrationTierUseCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    registrations
+      .filter(r => r.eventId === event.id)
+      .forEach(r => {
+        const createdAt = (r as any).createdAt || (r as any).created_at;
+        const stored = (r as any).registrationTierLabel;
+        const label = stored || inferTierLabelFromDate(event.registrationPricing, createdAt) || 'N/A';
+        map[label] = (map[label] || 0) + 1;
+      });
+    return map;
+  }, [registrations, event.id, event.registrationPricing]);
+
+  const spouseTierUseCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    registrations
+      .filter(r => r.eventId === event.id)
+      .forEach(r => {
+        const hasSpouse = !!(r as any).spouseDinnerTicket;
+        if (!hasSpouse) return;
+        const createdAt = (r as any).createdAt || (r as any).created_at;
+        const spouseAddedAt = (r as any).spouseAddedAt || createdAt;
+        const stored = (r as any).spouseTierLabel;
+        const label = stored || inferTierLabelFromDate(event.spousePricing, spouseAddedAt) || 'N/A';
+        map[label] = (map[label] || 0) + 1;
+      });
+    return map;
+  }, [registrations, event.id, event.spousePricing]);
+
+  const kidsTierUseCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    registrations
+      .filter(r => r.eventId === event.id)
+      .forEach(r => {
+        const kidsCount = Array.isArray((r as any).kids) ? (r as any).kids.length : 0;
+        if (kidsCount <= 0) return;
+        const createdAt = (r as any).createdAt || (r as any).created_at;
+        const kidsAddedAt = (r as any).kidsAddedAt || createdAt;
+        const stored = (r as any).kidsTierLabel;
+        const label = stored || inferTierLabelFromDate(event.kidsPricing, kidsAddedAt) || 'N/A';
+        map[label] = (map[label] || 0) + 1;
+      });
+    return map;
+  }, [registrations, event.id, event.kidsPricing]);
+
+  const tierUsers = useMemo(() => {
+    if (!tierUsersModal) return [];
+    const q = tierUsersSearch.trim().toLowerCase();
+    const { type, label } = tierUsersModal;
+
+    return registrations
+      .filter(r => r.eventId === event.id)
+      .filter(r => {
+        if (type === 'Registration') {
+          const createdAt = (r as any).createdAt || (r as any).created_at;
+          const stored = (r as any).registrationTierLabel;
+          const effective = stored || inferTierLabelFromDate(event.registrationPricing, createdAt) || 'N/A';
+          return effective === label;
+        }
+        if (type === 'Spouse') {
+          const hasSpouse = !!(r as any).spouseDinnerTicket;
+          if (!hasSpouse) return false;
+          const createdAt = (r as any).createdAt || (r as any).created_at;
+          const spouseAddedAt = (r as any).spouseAddedAt || createdAt;
+          const stored = (r as any).spouseTierLabel;
+          const effective = stored || inferTierLabelFromDate(event.spousePricing, spouseAddedAt) || 'N/A';
+          return effective === label;
+        }
+        // Children
+        const kidsCount = Array.isArray((r as any).kids) ? (r as any).kids.length : 0;
+        if (kidsCount <= 0) return false;
+        const createdAt = (r as any).createdAt || (r as any).created_at;
+        const kidsAddedAt = (r as any).kidsAddedAt || createdAt;
+        const stored = (r as any).kidsTierLabel;
+        const effective = stored || inferTierLabelFromDate(event.kidsPricing, kidsAddedAt) || 'N/A';
+        return effective === label;
+      })
+      .filter(r => {
+        if (!q) return true;
+        const hay = [
+          r.badgeName,
+          r.firstName,
+          r.lastName,
+          r.email,
+          r.organization,
+          (r as any).spouseFirstName,
+          (r as any).spouseLastName,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(q);
+      })
+      .sort(
+        (a, b) =>
+          (a.lastName || '').localeCompare(b.lastName || '') ||
+          (a.firstName || '').localeCompare(b.firstName || '')
+      );
+  }, [
+    tierUsersModal,
+    tierUsersSearch,
+    registrations,
+    event.id,
+    event.registrationPricing,
+    event.spousePricing,
+    event.kidsPricing,
+  ]);
+
+  const exportTierUsersXlsx = () => {
+    if (!tierUsersModal) return;
+
+    const safe = (s: string) =>
+      String(s || '')
+        .replace(/[^a-z0-9]+/gi, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 80);
+
+    const nowEst = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+
+    const titleRows: any[][] = [
+      ['TIER TYPE', tierUsersModal.type],
+      ['TIER', tierUsersModal.label],
+      ['EVENT', event.name],
+      ['EXPORTED AT (EST)', nowEst],
+      [],
+    ];
+
+    const baseHeaders = ['ID', 'Badge Name', 'First', 'Last', 'Email', 'Organization', 'Created At (EST)', 'Status'];
+    const spouseHeaders = ['Spouse First', 'Spouse Last', 'Spouse Added At (EST)'];
+    const kidsHeaders = ['Kids Count', 'Kids Added At (EST)'];
+
+    const headers =
+      tierUsersModal.type === 'Spouse'
+        ? [...baseHeaders, ...spouseHeaders]
+        : tierUsersModal.type === 'Children'
+          ? [...baseHeaders, ...kidsHeaders]
+          : baseHeaders;
+
+    const rows = tierUsers.map((r) => {
+      const isCancelled = r.status === 'cancelled' || !!(r as any).cancellationAt;
+      const createdAt = (r as any).createdAt || (r as any).created_at;
+      const base = [
+        r.id,
+        r.badgeName || `${r.firstName} ${r.lastName}`.trim(),
+        r.firstName,
+        r.lastName,
+        r.email,
+        r.organization,
+        formatDateTimeEST(createdAt),
+        isCancelled ? 'Cancelled' : 'Active',
+      ];
+
+      if (tierUsersModal.type === 'Spouse') {
+        const spouseAddedAt = (r as any).spouseAddedAt || createdAt;
+        return [
+          ...base,
+          (r as any).spouseFirstName || '',
+          (r as any).spouseLastName || '',
+          formatDateTimeEST(spouseAddedAt),
+        ];
+      }
+
+      if (tierUsersModal.type === 'Children') {
+        const kidsAddedAt = (r as any).kidsAddedAt || createdAt;
+        const kidsCount = Array.isArray((r as any).kids) ? (r as any).kids.length : 0;
+        return [...base, kidsCount, formatDateTimeEST(kidsAddedAt)];
+      }
+
+      return base;
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet([...titleRows, headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Tier Users');
+
+    const fileName = `TierUsers_${safe(event.name)}_${safe(tierUsersModal.type)}_${safe(tierUsersModal.label)}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+  };
 
   // Get activity details with seat availability
   const activityDetails = useMemo(() => {
@@ -476,6 +710,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
                     <th>Price</th>
                     <th>Start Date</th>
                     <th>End Date</th>
+                    <th>Users</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -485,6 +720,26 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
                       <td>${(typeof tier.price === 'number' ? tier.price : 0).toFixed(2)}</td>
                       <td>{tier.startDate ? formatDateShort(tier.startDate) : 'N/A'}</td>
                       <td>{tier.endDate ? formatDateShort(tier.endDate) : 'N/A'}</td>
+                      <td>
+                        {(() => {
+                          const label = tier.label || 'N/A';
+                          const usedBy = registrationTierUseCounts[label] || 0;
+                          return (
+                            <button
+                              className="btn btn-secondary"
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                              disabled={usedBy === 0}
+                              onClick={() => {
+                                setTierUsersModal({ type: 'Registration', label });
+                                setTierUsersSearch('');
+                              }}
+                              title={usedBy ? 'View users in this tier' : 'No registrations in this tier'}
+                            >
+                              Users ({usedBy})
+                            </button>
+                          );
+                        })()}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -507,6 +762,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
                     <th>Price</th>
                     <th>Start Date</th>
                     <th>End Date</th>
+                    <th>Users</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -516,6 +772,26 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
                       <td>${(typeof tier.price === 'number' ? tier.price : 0).toFixed(2)}</td>
                       <td>{tier.startDate ? formatDateShort(tier.startDate) : 'N/A'}</td>
                       <td>{tier.endDate ? formatDateShort(tier.endDate) : 'N/A'}</td>
+                      <td>
+                        {(() => {
+                          const label = tier.label || 'N/A';
+                          const usedBy = spouseTierUseCounts[label] || 0;
+                          return (
+                            <button
+                              className="btn btn-secondary"
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                              disabled={usedBy === 0}
+                              onClick={() => {
+                                setTierUsersModal({ type: 'Spouse', label });
+                                setTierUsersSearch('');
+                              }}
+                              title={usedBy ? 'View users in this tier' : 'No spouse tickets in this tier'}
+                            >
+                              Users ({usedBy})
+                            </button>
+                          );
+                        })()}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -538,6 +814,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
                     <th>Price</th>
                     <th>Start Date</th>
                     <th>End Date</th>
+                    <th>Users</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -547,6 +824,26 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
                       <td>${(typeof tier.price === 'number' ? tier.price : 0).toFixed(2)}</td>
                       <td>{tier.startDate ? formatDateShort(tier.startDate) : 'N/A'}</td>
                       <td>{tier.endDate ? formatDateShort(tier.endDate) : 'N/A'}</td>
+                      <td>
+                        {(() => {
+                          const label = tier.label || 'N/A';
+                          const usedBy = kidsTierUseCounts[label] || 0;
+                          return (
+                            <button
+                              className="btn btn-secondary"
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                              disabled={usedBy === 0}
+                              onClick={() => {
+                                setTierUsersModal({ type: 'Children', label });
+                                setTierUsersSearch('');
+                              }}
+                              title={usedBy ? 'View users in this tier' : 'No children purchases in this tier'}
+                            >
+                              Users ({usedBy})
+                            </button>
+                          );
+                        })()}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -689,6 +986,115 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
                           <td>{r.email}</td>
                           <td>{r.organization}</td>
                           <td>${Number(r.discountAmount || 0).toFixed(2)}</td>
+                          <td>{isCancelled ? 'Cancelled' : 'Active'}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Modal>
+        )}
+
+        {/* Tier users modal */}
+        {tierUsersModal && (
+          <Modal
+            title={`${tierUsersModal.type} Tier Users — ${tierUsersModal.label}`}
+            onClose={() => {
+              setTierUsersModal(null);
+              setTierUsersSearch('');
+            }}
+            size="xl"
+            footer={
+              <button className="btn btn-secondary" onClick={() => setTierUsersModal(null)}>
+                Close
+              </button>
+            }
+          >
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px' }}>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Search (name, email, organization)..."
+                value={tierUsersSearch}
+                onChange={(e) => setTierUsersSearch(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <button
+                className="btn btn-primary"
+                style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}
+                onClick={exportTierUsersXlsx}
+                disabled={tierUsers.length === 0}
+                title={tierUsers.length ? 'Download this tier list as XLSX' : 'No users to export'}
+              >
+                Export XLSX
+              </button>
+              <div style={{ fontSize: '13px', color: '#6b7280' }}>
+                {tierUsers.length} user(s)
+              </div>
+            </div>
+
+            <div className="table-wrapper">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Badge Name</th>
+                    <th>First</th>
+                    <th>Last</th>
+                    <th>Email</th>
+                    <th>Organization</th>
+                    {tierUsersModal.type === 'Spouse' && (
+                      <>
+                        <th>Spouse First</th>
+                        <th>Spouse Last</th>
+                        <th>Spouse Added At</th>
+                      </>
+                    )}
+                    {tierUsersModal.type === 'Children' && (
+                      <>
+                        <th>Kids Count</th>
+                        <th>Kids Added At</th>
+                      </>
+                    )}
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tierUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan={tierUsersModal.type === 'Registration' ? 7 : tierUsersModal.type === 'Spouse' ? 10 : 9} style={{ padding: '16px', color: '#6b7280' }}>
+                        No registrations found for this tier.
+                      </td>
+                    </tr>
+                  ) : (
+                    tierUsers.map((r) => {
+                      const isCancelled = r.status === 'cancelled' || !!(r as any).cancellationAt;
+                      const spouseAddedAt = (r as any).spouseAddedAt || (r as any).createdAt;
+                      const kidsAddedAt = (r as any).kidsAddedAt || (r as any).createdAt;
+                      const kidsCount = Array.isArray((r as any).kids) ? (r as any).kids.length : 0;
+                      return (
+                        <tr key={r.id}>
+                          <td>{r.id}</td>
+                          <td><strong>{r.badgeName || `${r.firstName} ${r.lastName}`.trim()}</strong></td>
+                          <td>{r.firstName}</td>
+                          <td>{r.lastName}</td>
+                          <td>{r.email}</td>
+                          <td>{r.organization}</td>
+                          {tierUsersModal.type === 'Spouse' && (
+                            <>
+                              <td>{(r as any).spouseFirstName || ''}</td>
+                              <td>{(r as any).spouseLastName || ''}</td>
+                              <td>{formatDateTimeEST(spouseAddedAt)}</td>
+                            </>
+                          )}
+                          {tierUsersModal.type === 'Children' && (
+                            <>
+                              <td>{kidsCount}</td>
+                              <td>{formatDateTimeEST(kidsAddedAt)}</td>
+                            </>
+                          )}
                           <td>{isCancelled ? 'Cancelled' : 'Active'}</td>
                         </tr>
                       );

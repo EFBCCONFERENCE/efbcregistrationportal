@@ -125,6 +125,11 @@ const createTables = async () => {
         wednesday_activity VARCHAR(255),
         wednesday_activity_waitlisted BOOLEAN DEFAULT FALSE,
         wednesday_activity_waitlisted_at TIMESTAMP NULL,
+        registration_tier_label VARCHAR(255) NULL,
+        spouse_tier_label VARCHAR(255) NULL,
+        kids_tier_label VARCHAR(255) NULL,
+        spouse_added_at TIMESTAMP NULL,
+        kids_added_at TIMESTAMP NULL,
         wednesday_reception VARCHAR(50),
         thursday_breakfast VARCHAR(50),
         thursday_luncheon VARCHAR(50),
@@ -136,6 +141,11 @@ const createTables = async () => {
         spouse_last_name VARCHAR(255),
         total_price DECIMAL(10, 2),
         payment_method VARCHAR(50),
+        registration_tier_label VARCHAR(255) NULL,
+        spouse_tier_label VARCHAR(255) NULL,
+        spouse_added_at TIMESTAMP NULL,
+        kids_tier_label VARCHAR(255) NULL,
+        kids_added_at TIMESTAMP NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
@@ -165,6 +175,8 @@ const createTables = async () => {
     await migrateBackfillPaidAt();
     await migratePendingPaymentFields();
     await migrateActivityWaitlist();
+    await migrateTierTracking();
+    await migrateTierTracking();
 
     // Activity Groups table (basic definition; columns may be extended by migrations)
     await databaseService.query(`
@@ -526,6 +538,39 @@ const migrateActivityWaitlist = async (): Promise<void> => {
     }
   } catch (error: any) {
     console.error('Error migrating activity waitlist feature:', error?.message || error);
+  }
+};
+
+// Migration helper to add pricing tier tracking fields to registrations table
+const migrateTierTracking = async (): Promise<void> => {
+  try {
+    const dbNameRows: any[] = await databaseService.query('SELECT DATABASE() as db');
+    const dbName = dbNameRows[0]?.db;
+    if (!dbName) return;
+
+    const regCols: any[] = await databaseService.query(
+      'SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+      [dbName, 'registrations']
+    );
+    const has = (name: string) => regCols.some((c: any) => c.COLUMN_NAME === name);
+
+    const alter: string[] = [];
+    const add = (col: string, type: string) => {
+      if (!has(col)) alter.push(`ADD COLUMN \`${col}\` ${type}`);
+    };
+
+    add('registration_tier_label', 'VARCHAR(255) NULL');
+    add('spouse_tier_label', 'VARCHAR(255) NULL');
+    add('kids_tier_label', 'VARCHAR(255) NULL');
+    add('spouse_added_at', 'TIMESTAMP NULL');
+    add('kids_added_at', 'TIMESTAMP NULL');
+
+    if (alter.length > 0) {
+      await databaseService.query(`ALTER TABLE \`registrations\` ${alter.join(', ')}`);
+      console.log('🛠️ Added registrations tier tracking columns');
+    }
+  } catch (error: any) {
+    console.error('Error migrating tier tracking columns:', error?.message || error);
   }
 };
 
