@@ -551,6 +551,14 @@ body {
   min-height: 0;
 }
 
+/* Always-visible scrollbars for detailed list tables inside modals */
+.modal .modal-body .table-wrapper,
+.modal .modal-body .detailed-table-wrapper {
+  overflow: scroll; /* force both vertical + horizontal scrollbars */
+  scrollbar-gutter: stable both-edges; /* reserve space where supported */
+  max-height: 60vh; /* ensure vertical scrolling happens inside the table wrapper */
+}
+
 .modal-actions {
   display: flex;
   gap: 1rem;
