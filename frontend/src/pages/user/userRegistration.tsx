@@ -147,6 +147,9 @@ interface UserRegistrationProps {
   registrations: Registration[];
   user: { id: number; name: string; email: string };
   targetEventId?: number | null;
+ 
+  scrollToPaymentSection?: boolean;
+  onScrollToPaymentSectionConsumed?: () => void;
   onBack: () => void;
   onSave: (regData: Registration) => void;
   isAdminEdit?: boolean; // True when admin is editing/creating registration
@@ -157,6 +160,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
   registrations,
   user,
   targetEventId,
+  scrollToPaymentSection = false,
+  onScrollToPaymentSectionConsumed,
   onBack,
   onSave,
   isAdminEdit = false,
@@ -172,6 +177,18 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
     () => (event ? registrations.find(r => r.userId === user.id && r.eventId === event.id) || null : null),
     [registrations, user, event]
   );
+
+  useEffect(() => {
+    if (!scrollToPaymentSection || isAdminEdit) return;
+    const timer = window.setTimeout(() => {
+      const el = document.getElementById('registration-payment-section');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      onScrollToPaymentSectionConsumed?.();
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [scrollToPaymentSection, isAdminEdit, event?.id, onScrollToPaymentSectionConsumed]);
 
   const isEditing = !!registration;
   const isAlreadyPaid = !!(registration as any)?.paid;
@@ -3629,7 +3646,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
             }
             
             return (
-            <div className="form-section">
+            <div id="registration-payment-section" className="form-section">
               <h3 className="section-title">Payment Information</h3>
               {(() => {
                 // Re-check these flags for the payment summary logic

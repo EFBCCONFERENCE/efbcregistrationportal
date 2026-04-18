@@ -17,6 +17,11 @@
   color: white;
 }
 
+.status-due {
+  background-color: #d97706;
+  color: white;
+}
+
 .status-expired {
   background-color: var(--danger-color);
   color: white;
@@ -123,6 +128,12 @@
   display: flex;
   align-items: center;
   flex: 1;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.event-header-left .event-status {
+  margin-left: 0;
 }
 
 .btn-preview {

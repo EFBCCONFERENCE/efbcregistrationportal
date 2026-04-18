@@ -12,7 +12,7 @@ interface UserDashboardProps {
   handleSaveRegistration: (regData: Registration) => void;
   handleCancelRegistration: (regId: number) => void;
   user: User;
-  onBeginRegistration: (eventId?: number) => void;
+  onBeginRegistration: (eventId?: number, options?: { scrollToPayment?: boolean }) => void;
   pendingCancellationIds?: number[];
 }
 
@@ -35,6 +35,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     registrations.find(r => r.userId === user.id && r.eventId === activeEvent?.id), 
     [registrations, user, activeEvent]
   );
+
+  const paymentDue = useMemo(() => {
+    const reg = userRegistration as any;
+    if (!reg) return false;
+    if (reg.status === 'cancelled' || reg.cancellationAt) return false;
+    if (Number(reg.pendingPaymentAmount || 0) > 0) return true;
+    if (reg.paid) return false;
+    const pm = reg.paymentMethod || 'Card';
+    if (pm === 'Comp') return false;
+    return Number(reg.totalPrice ?? 0) > 0;
+  }, [userRegistration]);
 
   // NOTE: Per requirements, dashboard cards show global event counts now
 
@@ -70,6 +81,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             <div className="event-header-left">
               <h2>{activeEvent.name}</h2>
               <span className="event-status status-active">Active</span>
+              {userRegistration && paymentDue && (userRegistration as any).status !== 'cancelled' && (
+                <span className="event-status status-due">Due</span>
+              )}
             </div>
             {userRegistration && (userRegistration as any).status !== 'cancelled' && (
               <button
@@ -113,9 +127,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 <div className="event-actions">
                   <button
                     className="btn btn-primary"
-                    onClick={() => onBeginRegistration(activeEvent.id)}
+                    onClick={() =>
+                      onBeginRegistration(activeEvent.id, paymentDue ? { scrollToPayment: true } : undefined)
+                    }
                   >
-                    Edit
+                    {paymentDue ? 'Pay' : 'Edit'}
                   </button>
                   <button
                     className="btn btn-danger"

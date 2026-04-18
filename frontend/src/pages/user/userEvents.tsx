@@ -11,7 +11,7 @@ interface UserEventsProps {
   handleSaveRegistration: (regData: Registration) => void;
   handleCancelRegistration: (regId: number) => void;
   user: User;
-  onBeginRegistration: (eventId: number) => void;
+  onBeginRegistration: (eventId: number, options?: { scrollToPayment?: boolean }) => void;
   pendingCancellationIds?: number[];
 }
 

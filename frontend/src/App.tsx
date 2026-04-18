@@ -48,6 +48,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User>({ id: 999, name: "Current User", email: "current.user@example.com" });
   const [isMobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [registrationTargetEventId, setRegistrationTargetEventId] = useState<number | null>(null);
+  const [registrationScrollToPayment, setRegistrationScrollToPayment] = useState(false);
   const [adminEditingEvent, setAdminEditingEvent] = useState<Event | null>(null);
   const [adminEditingRegistrationId, setAdminEditingRegistrationId] = useState<number | null>(null);
   const [adminNewRegistrationUser, setAdminNewRegistrationUser] = useState<{ id: number; name: string; email: string } | null>(null);
@@ -432,10 +433,15 @@ useEffect(() => {
     navigate('/signup');
   };
 
-  const beginRegistration = (eventId?: number) => {
+  const beginRegistration = (eventId?: number, options?: { scrollToPayment?: boolean }) => {
     setRegistrationTargetEventId(eventId ?? null);
+    setRegistrationScrollToPayment(!!options?.scrollToPayment);
     setView('registration');
   };
+
+  const clearRegistrationScrollToPayment = useCallback(() => {
+    setRegistrationScrollToPayment(false);
+  }, []);
   
   const beginAdminEditRegistration = (registrationId: number) => {
     setAdminEditingRegistrationId(registrationId);
@@ -756,7 +762,9 @@ useEffect(() => {
             handleSaveRegistration={(regData) => handleSaveRegistration(regData, user.id)}
             handleCancelRegistration={handleCancelRegistration}
             user={user}
-            onBeginRegistration={(eventId?: number) => beginRegistration(eventId)}
+            onBeginRegistration={(eventId?: number, opts?: { scrollToPayment?: boolean }) =>
+              beginRegistration(eventId, opts)
+            }
             pendingCancellationIds={pendingCancellationIds}
           />;
         case 'profile':
@@ -776,7 +784,9 @@ useEffect(() => {
             handleSaveRegistration={(regData) => handleSaveRegistration(regData, user.id)}
             handleCancelRegistration={handleCancelRegistration}
             user={user} 
-            onBeginRegistration={() => beginRegistration()}
+            onBeginRegistration={(eventId?: number, opts?: { scrollToPayment?: boolean }) =>
+              beginRegistration(eventId, opts)
+            }
             pendingCancellationIds={pendingCancellationIds}
           />;
         case 'registration':
@@ -785,7 +795,12 @@ useEffect(() => {
             registrations={registrations}
             user={user}
             targetEventId={registrationTargetEventId}
-            onBack={() => setView('dashboard')}
+            scrollToPaymentSection={registrationScrollToPayment}
+            onScrollToPaymentSectionConsumed={clearRegistrationScrollToPayment}
+            onBack={() => {
+              clearRegistrationScrollToPayment();
+              setView('dashboard');
+            }}
             onSave={(regData) => handleSaveRegistration(regData, user.id)}
           />;
       }
