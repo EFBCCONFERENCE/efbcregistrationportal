@@ -56,6 +56,15 @@ function getEasternTimeMidnight(dateString: string): number {
   }
 }
 
+/** Add one calendar day to YYYY-MM-DD using UTC date math (no server local timezone). */
+function addOneCalendarDayYyyyMmDd(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  if (!y || !m || !d) return ymd;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
+
 /**
  * Get Eastern Time end of day for a date string
  * Returns the start of the next day (exclusive) to ensure the full end date is included
@@ -73,9 +82,9 @@ function getEasternTimeEndOfDay(dateString: string): number {
       fallbackDate.setUTCDate(fallbackDate.getUTCDate() + 1);
       return getEasternTimeMidnight(`${fallbackDate.getUTCFullYear()}-${String(fallbackDate.getUTCMonth() + 1).padStart(2, '0')}-${String(fallbackDate.getUTCDate()).padStart(2, '0')}`);
     }
-    
-    const nextDay = new Date(year, month - 1, day + 1);
-    const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+
+    const ymd = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const nextDayStr = addOneCalendarDayYyyyMmDd(ymd);
     return getEasternTimeMidnight(nextDayStr);
   } catch (error) {
     console.warn(`Failed to parse end date ${dateString} as Eastern Time, using UTC:`, error);
@@ -83,6 +92,75 @@ function getEasternTimeEndOfDay(dateString: string): number {
     fallbackDate.setUTCDate(fallbackDate.getUTCDate() + 1);
     return fallbackDate.getTime();
   }
+}
+
+function easternYyyyMmDdFromTimestamp(ms: number): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts = formatter.formatToParts(new Date(ms));
+  const y = parts.find(p => p.type === 'year')?.value || '0';
+  const mo = parts.find(p => p.type === 'month')?.value || '01';
+  const d = parts.find(p => p.type === 'day')?.value || '01';
+  return `${y}-${mo}-${d}`;
+}
+
+function parsePricingTierArray(v: any): any[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v === 'object') return [v];
+  try {
+    const x = JSON.parse(v);
+    return Array.isArray(x) ? x : x && typeof x === 'object' ? [x] : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Choose active pricing tier for an instant in Eastern Time.
+ * 1) Half-open window [start, end).
+ * 2) If none match, inclusive calendar match on tier startDate/endDate (America/New_York).
+ * Never falls back to "last tier in JSON" (that wrongly selected On-site $199).
+ */
+function pickActivePricingTier(tiersInput: any[], nowMs: number): any | null {
+  const list = parsePricingTierArray(tiersInput).filter(Boolean);
+  if (list.length === 0) return null;
+
+  const mapped = list.map(t => ({
+    ...t,
+    s: t.startDate ? getEasternTimeMidnight(String(t.startDate)) : -Infinity,
+    e: t.endDate ? getEasternTimeEndOfDay(String(t.endDate)) : Infinity,
+  }));
+
+  const hit = mapped.find((t: any) => nowMs >= t.s && nowMs < t.e);
+  if (hit) return hit;
+
+  const d = easternYyyyMmDdFromTimestamp(nowMs);
+  const dated = mapped.filter((t: any) => t.startDate && t.endDate);
+  const calHits = dated.filter((t: any) => d >= String(t.startDate) && d <= String(t.endDate));
+  if (calHits.length === 1) return calHits[0];
+  if (calHits.length > 1) {
+    return [...calHits].sort((a: any, b: any) => String(b.startDate).localeCompare(String(a.startDate)))[0];
+  }
+
+  const sortedByStart = [...mapped]
+    .filter((t: any) => t.startDate)
+    .sort((a: any, b: any) => String(a.startDate).localeCompare(String(b.startDate)));
+  if (sortedByStart.length && d < String(sortedByStart[0].startDate)) {
+    return sortedByStart[0];
+  }
+
+  const sortedByEnd = [...mapped]
+    .filter((t: any) => t.endDate)
+    .sort((a: any, b: any) => String(a.endDate).localeCompare(String(b.endDate)));
+  const lastEnd = sortedByEnd[sortedByEnd.length - 1];
+  if (lastEnd && lastEnd.endDate && d > String(lastEnd.endDate)) return lastEnd;
+
+  return null;
 }
 
 function getCurrentEasternTime(): number {
@@ -441,28 +519,14 @@ export class RegistrationController {
       try {
         const ev: any = await this.db.findById('events', registration.eventId);
         if (ev) {
-          const parseJson = (v:any)=>{ try { return JSON.parse(v||'[]'); } catch { return []; } };
-          const regTiers: any[] = parseJson(ev.registration_pricing);
-          const spouseTiers: any[] = parseJson(ev.spouse_pricing);
+          const regTiers = parsePricingTierArray(ev.registration_pricing);
+          const spouseTiers = parsePricingTierArray(ev.spouse_pricing);
           const breakfastPrice = Number(ev.breakfast_price ?? 0);
           // Use Eastern Time for breakfast end date
           const bEnd = ev.breakfast_end_date ? getEasternTimeEndOfDay(ev.breakfast_end_date) : Infinity;
-          // Get current time in Eastern Time (Florida timezone)
           const now = getCurrentEasternTime();
-          const pick = (tiers:any[])=>{
-            // Convert tier dates to Eastern Time midnight/end-of-day
-            const mapped = (tiers||[]).map(t=>({ 
-              ...t, 
-              s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity, 
-              e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity 
-            }));
-            // Find active tier: now >= startDate AND now < endDate (end date is exclusive - start of next day)
-            // Example: Priority ends Dec 11, so endDate = Dec 12 00:00:00 (exclusive)
-            // Any time on Dec 11 will be < Dec 12 00:00:00, so it matches
-            return mapped.find((t:any)=> now>=t.s && now<t.e) || mapped[mapped.length-1] || null;
-          };
-          const base = pick(regTiers);
-          const spouse = registration.spouseDinnerTicket ? pick(spouseTiers) : null;
+          const base = pickActivePricingTier(regTiers, now);
+          const spouse = registration.spouseDinnerTicket ? pickActivePricingTier(spouseTiers, now) : null;
           
           // Store pricing tier labels (for reporting/export) using the tier active at submission time
           (registration as any).registrationTierLabel = (base as any)?.label || (base as any)?.name || undefined;
@@ -477,8 +541,8 @@ export class RegistrationController {
           if ((registration as any).spouseBreakfast && now <= bEnd) total += (isNaN(breakfastPrice)?0:breakfastPrice);
           
           // Calculate kids price
-          const kidsTiers: any[] = parseJson(ev.kids_pricing);
-          const kidsActive = pick(kidsTiers);
+          const kidsTiers = parsePricingTierArray(ev.kids_pricing);
+          const kidsActive = pickActivePricingTier(kidsTiers, now);
           if (registration.kids && registration.kids.length > 0) {
             (registration as any).kidsTierLabel = (kidsActive as any)?.label || (kidsActive as any)?.name || undefined;
             // For kids, track when they were first added (on create it's the submission time)
@@ -908,25 +972,17 @@ export class RegistrationController {
             try { return JSON.parse(v); } catch { return []; }
           };
           const now = getCurrentEasternTime();
-          const pick = (tiers: any[]) => {
-            const mapped = (tiers || []).map(t => ({
-              ...t,
-              s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-              e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-            }));
-            return mapped.find((t: any) => now >= t.s && now < t.e) || mapped[mapped.length - 1] || null;
-          };
 
           const nowDb = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
           if (shouldSetSpouseFirstAdded) {
-            const spouseTier = ev ? pick(parseJson(ev.spouse_pricing)) : null;
+            const spouseTier = ev ? pickActivePricingTier(parseJson(ev.spouse_pricing), now) : null;
             dbPayload.spouse_added_at = nowDb;
             dbPayload.spouse_tier_label = (spouseTier as any)?.label || (spouseTier as any)?.name || null;
           }
 
           if (shouldSetKidsFirstAdded) {
-            const kidsTier = ev ? pick(parseJson(ev.kids_pricing)) : null;
+            const kidsTier = ev ? pickActivePricingTier(parseJson(ev.kids_pricing), now) : null;
             dbPayload.kids_added_at = nowDb;
             dbPayload.kids_tier_label = (kidsTier as any)?.label || (kidsTier as any)?.name || null;
           }
@@ -988,19 +1044,10 @@ export class RegistrationController {
             const kidsTiers: any[] = parseJson(ev.kids_pricing);
             const now = getCurrentEasternTime();
 
-            const pick = (tiers: any[]) => {
-              const mapped = (tiers || []).map(t => ({
-                ...t,
-                s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-              }));
-              return mapped.find((t: any) => now >= t.s && now < t.e) || mapped[mapped.length - 1] || null;
-            };
-
             // Spouse newly added
             const newSpouseTicket = (updateData as any).spouseDinnerTicket || false;
             if (newSpouseTicket && !oldSpouseTicket) {
-              const spouse = pick(spouseTiers);
+              const spouse = pickActivePricingTier(spouseTiers, now);
               const spousePrice = spouse && typeof spouse.price === 'number' ? spouse.price : 200;
               pendingAmount += spousePrice;
               newTotalPrice += spousePrice;
@@ -1013,7 +1060,7 @@ export class RegistrationController {
             const effectiveOldKidsCount = newKidsCount > 0 ? oldKidsCount : 0;
             if (newKidsCount > effectiveOldKidsCount) {
               const addedKidsCount = newKidsCount - effectiveOldKidsCount;
-              const kidsActive = pick(kidsTiers);
+              const kidsActive = pickActivePricingTier(kidsTiers, now);
               const pricePerKid = kidsActive?.price ?? 50;
               const kidsPrice = pricePerKid * addedKidsCount;
               pendingAmount += kidsPrice;
