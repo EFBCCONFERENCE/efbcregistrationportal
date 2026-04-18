@@ -88,10 +88,12 @@ function getEasternTimeEndOfDay(dateString: string): number {
       return getEasternTimeMidnight(`${fallbackDate.getUTCFullYear()}-${String(fallbackDate.getUTCMonth() + 1).padStart(2, '0')}-${String(fallbackDate.getUTCDate()).padStart(2, '0')}`);
     }
     
-    // Get midnight of next day in Eastern Time
-    // This makes the end date exclusive, so Dec 11 includes all of Dec 11 up to (but not including) Dec 12
-    const nextDay = new Date(year, month - 1, day + 1);
-    const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+    // Next calendar day (UTC date math), then Eastern midnight — avoids server local TZ skew
+    const ymd = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const [yy, mm, dd] = ymd.split('-').map(Number);
+    const dt = new Date(Date.UTC(yy, mm - 1, dd));
+    dt.setUTCDate(dt.getUTCDate() + 1);
+    const nextDayStr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
     return getEasternTimeMidnight(nextDayStr);
   } catch (error) {
     console.warn(`Failed to parse end date ${dateString} as Eastern Time, using UTC:`, error);
@@ -140,6 +142,52 @@ function getCurrentEasternTime(): number {
   const secondsMs = second * 1000;
   
   return easternMidnight + hoursMs + minutesMs + secondsMs;
+}
+
+function mapTiersWithBounds(tiers: any[]): any[] {
+  return (tiers || [])
+    .map((t: any) => ({
+      ...t,
+      s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
+      e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
+    }))
+    .sort((a: any, b: any) => a.s - b.s);
+}
+
+function pickActiveTierRecord(tiers: any[], now: number): any | null {
+  const arr = mapTiersWithBounds(tiers);
+  if (!arr.length) return null;
+  const hit = arr.find((t: any) => now >= t.s && now < t.e);
+  if (hit) return hit;
+  if (now < arr[0].s) return arr[0];
+  if (now >= arr[arr.length - 1].e) return arr[arr.length - 1];
+  const upcoming = arr.find((t: any) => now < t.s);
+  return upcoming || arr[arr.length - 1];
+}
+
+/** Per-tier line amounts; sum aligns with tier-based package total (before discount code). */
+function computePackageLineAmounts(opts: {
+  registrationPricing: any[];
+  spousePricing: any[];
+  kidsPricing: any[];
+  spouseSelected: boolean;
+  kidsCount: number;
+}) {
+  const now = getCurrentEasternTime();
+  const reg = pickActiveTierRecord(opts.registrationPricing, now);
+  const conference = typeof reg?.price === 'number' ? reg.price : 675;
+  let spouse = 0;
+  if (opts.spouseSelected) {
+    const st = pickActiveTierRecord(opts.spousePricing, now);
+    spouse = typeof st?.price === 'number' ? st.price : 200;
+  }
+  let kids = 0;
+  if (opts.kidsCount > 0) {
+    const kt = pickActiveTierRecord(opts.kidsPricing, now);
+    const per = typeof kt?.price === 'number' ? kt.price : 0;
+    kids = per * opts.kidsCount;
+  }
+  return { conference, spouse, kids, sum: conference + spouse + kids };
 }
 
 interface UserRegistrationProps {
@@ -473,6 +521,19 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
   const regTiers = useMemo(() => event?.registrationPricing || [], [event?.registrationPricing]);
   const spouseTiers = useMemo(() => event?.spousePricing || [], [event?.spousePricing]);
   const kidsTiers = useMemo(() => event?.kidsPricing || [], [event?.kidsPricing]);
+
+  /** Tier line items for payment summary (before discount); sum should match formData.totalPrice when pricing is in sync. */
+  const checkoutPackageLines = useMemo(
+    () =>
+      computePackageLineAmounts({
+        registrationPricing: regTiers,
+        spousePricing: spouseTiers,
+        kidsPricing: kidsTiers,
+        spouseSelected: !!formData.spouseDinnerTicket,
+        kidsCount: kids.length,
+      }),
+    [regTiers, spouseTiers, kidsTiers, formData.spouseDinnerTicket, kids.length]
+  );
 
   // Calculate original price (what was already paid/stored for existing registrations)
   const originalPrice = useMemo(() => {
@@ -3801,8 +3862,13 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                   )}
                   {!isAddingSpouse && !isAddingKids && !hasPendingPayment && (
                   <div className="payment-item">
-                    <span>Conference Registration:</span>
-                      <span>${finalTotal.toFixed(2)}</span>
+                    <span>{priceOverrideEnabled ? 'Registration Total:' : 'Conference Registration:'}</span>
+                    <span>
+                      ${(priceOverrideEnabled
+                        ? Number(formData.totalPrice || 0)
+                        : checkoutPackageLines.conference
+                      ).toFixed(2)}
+                    </span>
                   </div>
                   )}
                   {hasPendingPayment && (
@@ -3817,7 +3883,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                       {(formData.spouseDinnerTicket && !isAddingSpouse && !isAddingKids) || isAddingSpouse || (isAddingSpouse && isAddingKids) ? (
                         <div className="payment-item">
                           <span>Spouse Dinner Ticket:</span>
-                          <span>${(function () { const now = getCurrentEasternTime(); const tiers = (event.spousePricing || []).map((t: any) => ({ ...t, s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity, e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity })).sort((a: any, b: any) => a.s - b.s); const active = tiers.find((t: any) => now >= t.s && now < t.e) || (now < tiers[0]?.s ? tiers[0] : (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1]))); return (active?.price ?? 0).toFixed(2); })()}</span>
+                          <span>${checkoutPackageLines.spouse.toFixed(2)}</span>
                         </div>
                       ) : null}
                       {(kids.length > 0 && !isAddingKids && !isAddingSpouse) || isAddingKids || (isAddingSpouse && isAddingKids) ? (
@@ -3826,25 +3892,23 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                             ? `${kids.length - originalKidsCount} ${(kids.length - originalKidsCount) === 1 ? 'child' : 'children'}`
                             : `${kids.length} ${kids.length === 1 ? 'child' : 'children'}`}):</span>
                           <span>${(function () {
-                            // if (formData.kidsTotalPrice !== undefined) {
-                            //   return formData.kidsTotalPrice.toFixed(2);
-                            // }
-                            const now = getCurrentEasternTime();
-                            const tiers = (event.kidsPricing || []).map((t: any) => ({ 
-                              ...t, 
-                              s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity, 
-                              e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity 
-                            })).sort((a: any, b: any) => a.s - b.s);
-                            const active = tiers.find((t: any) => now >= t.s && now < t.e) || 
-                              (now < tiers[0]?.s ? tiers[0] : 
-                              (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : 
-                              (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
-                            const pricePerKid = active?.price ?? 0;
-                            // When adding kids, only calculate for new children
-                            const kidsCount = (isAddingKids || (isAddingSpouse && isAddingKids)) 
-                              ? (kids.length - originalKidsCount) 
-                              : kids.length;
-                            return (pricePerKid * kidsCount).toFixed(2);
+                            if (isAddingKids || (isAddingSpouse && isAddingKids)) {
+                              const now = getCurrentEasternTime();
+                              const tiers = (event.kidsPricing || []).map((t: any) => ({
+                                ...t,
+                                s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
+                                e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
+                              })).sort((a: any, b: any) => a.s - b.s);
+                              const active =
+                                tiers.find((t: any) => now >= t.s && now < t.e) ||
+                                (now < tiers[0]?.s ? tiers[0] :
+                                  (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] :
+                                    (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
+                              const pricePerKid = active?.price ?? 0;
+                              const kidsCount = kids.length - originalKidsCount;
+                              return (pricePerKid * kidsCount).toFixed(2);
+                            }
+                            return checkoutPackageLines.kids.toFixed(2);
                           })()}</span>
                         </div>
                       ) : null}
