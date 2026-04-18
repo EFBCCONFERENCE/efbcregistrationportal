@@ -809,8 +809,16 @@ export class RegistrationController {
       const isMassage = updatedActivity.toLowerCase().includes('massage');
       const isPickleball = updatedActivity.toLowerCase().includes('pickleball');
       
+      const auth = this.getAuth(req);
+      const isAdminUpdate = auth.role === 'admin';
+
+      const adminSkipFields = isAdminUpdate
+        ? ['totalPrice', 'paidAmount', 'pendingPaymentAmount', 'paid']
+        : [];
+
       for (const [camelKey, dbKey] of Object.entries(fieldMapping)) {
         if (camelKey in updateDataObj && camelKey !== 'id') {
+          if (adminSkipFields.includes(camelKey)) continue;
           let value = updateDataObj[camelKey];
           
           // Clear golf-related fields if activity is not golf
@@ -832,6 +840,10 @@ export class RegistrationController {
           if (camelKey === 'kids') {
             if (Array.isArray(value) && value.length > 0) {
               value = JSON.stringify(value);
+            } else if (existingRow && existingRow.kids_data) {
+              // Don't wipe existing kids when an empty array is sent
+              // (e.g. admin editing spouse without touching kids section)
+              continue;
             } else {
               value = null;
             }
@@ -889,7 +901,12 @@ export class RegistrationController {
 
         if (shouldSetSpouseFirstAdded || shouldSetKidsFirstAdded) {
           const ev: any = await this.db.findById('events', existingRow.event_id);
-          const parseJson = (v: any) => { try { return JSON.parse(v || '[]'); } catch { return []; } };
+          const parseJson = (v: any) => {
+            if (!v) return [];
+            if (Array.isArray(v)) return v;
+            if (typeof v === 'object') return [v];
+            try { return JSON.parse(v); } catch { return []; }
+          };
           const now = getCurrentEasternTime();
           const pick = (tiers: any[]) => {
             const mapped = (tiers || []).map(t => ({
@@ -938,9 +955,6 @@ export class RegistrationController {
         }
       }
       // Calculate pending payment if admin is updating price or adding spouse/children
-      const auth = this.getAuth(req);
-      const isAdminUpdate = auth.role === 'admin';
-      
       if (isAdminUpdate) {
         // Get existing registration data
         const oldTotalPrice = Number(existingRow.total_price || 0);
@@ -951,132 +965,76 @@ export class RegistrationController {
           : [];
         const oldKidsCount = Array.isArray(oldKidsData) ? oldKidsData.length : 0;
         
-        // Calculate new total price and pending amount
+        // Calculate new total price and pending amount.
+        // Always detect spouse/kids additions from event tier prices so
+        // the pending amount is accurate regardless of what totalPrice
+        // the frontend sends (which may include card-fee inflation).
         let newTotalPrice = oldTotalPrice;
         let pendingAmount = 0;
         const reasonParts: string[] = [];
         const adminReason = (updateData as any).pendingPaymentReason || '';
-        
-        // Check if price was manually overridden
-        if ((updateData as any).totalPrice !== undefined && (updateData as any).totalPrice !== oldTotalPrice) {
-          const priceDiff = Number((updateData as any).totalPrice) - oldTotalPrice;
-          if (priceDiff > 0) {
-            pendingAmount += priceDiff;
-            reasonParts.push(`Price increased by admin from $${oldTotalPrice.toFixed(2)} to $${Number((updateData as any).totalPrice).toFixed(2)}`);
-            newTotalPrice = Number((updateData as any).totalPrice);
-          } else if (priceDiff < 0) {
-            // Price decreased - refund scenario (not handled in this flow)
-            newTotalPrice = Number((updateData as any).totalPrice);
-          }
-        } else {
-          // Calculate price from event pricing if not manually overridden
-          try {
-            const ev: any = await this.db.findById('events', existingRow.event_id);
-            if (ev) {
-              const parseJson = (v: any) => { try { return JSON.parse(v || '[]'); } catch { return []; } };
-              const regTiers: any[] = parseJson(ev.registration_pricing);
-              const spouseTiers: any[] = parseJson(ev.spouse_pricing);
-              const kidsTiers: any[] = parseJson(ev.kids_pricing);
-              const breakfastPrice = Number(ev.breakfast_price ?? 0);
-              const bEnd = ev.breakfast_end_date ? getEasternTimeEndOfDay(ev.breakfast_end_date) : Infinity;
-              const now = getCurrentEasternTime();
-              
-              const pick = (tiers: any[]) => {
-                const mapped = (tiers || []).map(t => ({
-                  ...t,
-                  s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                  e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-                }));
-                return mapped.find((t: any) => now >= t.s && now < t.e) || mapped[mapped.length - 1] || null;
-              };
-              
-              // Calculate base price
-              const base = pick(regTiers);
-              let calculatedTotal = 0;
-              if (base && typeof base.price === 'number') {
-                calculatedTotal += base.price;
-              } else {
-                calculatedTotal += Number(ev.default_price || 0);
-              }
-              
-              // Check if spouse was added
-              const newSpouseTicket = (updateData as any).spouseDinnerTicket || false;
-              if (newSpouseTicket && !oldSpouseTicket) {
-                const spouse = pick(spouseTiers);
-                const spousePrice = spouse && typeof spouse.price === 'number' ? spouse.price : 200; // Default
-                calculatedTotal += spousePrice;
-                pendingAmount += spousePrice;
-                reasonParts.push(`Spouse dinner ticket added ($${spousePrice.toFixed(2)})`);
-              } else if (newSpouseTicket && oldSpouseTicket) {
-                // Spouse already exists, recalculate price
-                const spouse = pick(spouseTiers);
-                const spousePrice = spouse && typeof spouse.price === 'number' ? spouse.price : 200;
-                calculatedTotal += spousePrice;
-              }
-              
-              // Check if spouse breakfast was added
-              if ((updateData as any).spouseBreakfast && now <= bEnd) {
-                calculatedTotal += (isNaN(breakfastPrice) ? 0 : breakfastPrice);
-              }
-              
-              // Check if children were added
-              const newKids = (updateData as any).kids || [];
-              const newKidsCount = Array.isArray(newKids) ? newKids.length : 0;
-              if (newKidsCount > oldKidsCount) {
-                const addedKidsCount = newKidsCount - oldKidsCount;
-                const kidsActive = pick(kidsTiers);
-                const pricePerKid = kidsActive?.price ?? 50; // Default
-                const kidsPrice = pricePerKid * addedKidsCount;
-                calculatedTotal += kidsPrice;
-                pendingAmount += kidsPrice;
-                reasonParts.push(`${addedKidsCount} children added ($${kidsPrice.toFixed(2)})`);
-              } else if (newKidsCount > 0) {
-                // Children already exist, recalculate price
-                const kidsActive = pick(kidsTiers);
-                const pricePerKid = kidsActive?.price ?? 50;
-                calculatedTotal += pricePerKid * newKidsCount;
-              }
-              
-              // Apply discount if exists
-              if (existingRow.discount_code) {
-                try {
-                  const codeRows = await this.db.query(
-                    'SELECT * FROM discount_codes WHERE code = ? AND event_id = ?',
-                    [existingRow.discount_code.toUpperCase().trim(), existingRow.event_id]
-                  );
-                  
-                  if (codeRows.length > 0) {
-                    const { DiscountCode } = await import('../models/DiscountCode');
-                    const discountCode = DiscountCode.fromDatabase(codeRows[0]);
-                    const validation = discountCode.isValid();
-                    
-                    if (validation.valid) {
-                      let discountAmount = 0;
-                      if (discountCode.discountType === 'percentage') {
-                        discountAmount = (calculatedTotal * discountCode.discountValue) / 100;
-                      } else {
-                        discountAmount = discountCode.discountValue;
-                      }
-                      calculatedTotal = Math.max(0, calculatedTotal - discountAmount);
-                    }
-                  }
-                } catch (discountError: any) {
-                  console.error('Error applying discount code:', discountError);
-                }
-              }
-              
-              // Only update if calculated total is different and not manually overridden
-              if ((updateData as any).totalPrice === undefined && Math.abs(calculatedTotal - oldTotalPrice) > 0.01) {
-                const priceDiff = calculatedTotal - oldTotalPrice;
-                if (priceDiff > 0) {
-                  pendingAmount += priceDiff;
-                  reasonParts.push(`Price recalculated from $${oldTotalPrice.toFixed(2)} to $${calculatedTotal.toFixed(2)}`);
-                }
-                newTotalPrice = calculatedTotal;
-              }
+
+        // --- Detect spouse / kids additions using event tier prices ---
+        try {
+          const ev: any = await this.db.findById('events', existingRow.event_id);
+          if (ev) {
+            const parseJson = (v: any) => {
+              if (!v) return [];
+              if (Array.isArray(v)) return v;
+              if (typeof v === 'object') return [v];
+              try { return JSON.parse(v); } catch { return []; }
+            };
+            const spouseTiers: any[] = parseJson(ev.spouse_pricing);
+            const kidsTiers: any[] = parseJson(ev.kids_pricing);
+            const now = getCurrentEasternTime();
+
+            const pick = (tiers: any[]) => {
+              const mapped = (tiers || []).map(t => ({
+                ...t,
+                s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
+                e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
+              }));
+              return mapped.find((t: any) => now >= t.s && now < t.e) || mapped[mapped.length - 1] || null;
+            };
+
+            // Spouse newly added
+            const newSpouseTicket = (updateData as any).spouseDinnerTicket || false;
+            if (newSpouseTicket && !oldSpouseTicket) {
+              const spouse = pick(spouseTiers);
+              const spousePrice = spouse && typeof spouse.price === 'number' ? spouse.price : 200;
+              pendingAmount += spousePrice;
+              newTotalPrice += spousePrice;
+              reasonParts.push(`Spouse dinner ticket added ($${spousePrice.toFixed(2)})`);
             }
-          } catch (e) {
-            console.error('Error calculating pending payment:', e);
+
+            // Children newly added
+            const newKids = (updateData as any).kids || [];
+            const newKidsCount = Array.isArray(newKids) ? newKids.length : 0;
+            const effectiveOldKidsCount = newKidsCount > 0 ? oldKidsCount : 0;
+            if (newKidsCount > effectiveOldKidsCount) {
+              const addedKidsCount = newKidsCount - effectiveOldKidsCount;
+              const kidsActive = pick(kidsTiers);
+              const pricePerKid = kidsActive?.price ?? 50;
+              const kidsPrice = pricePerKid * addedKidsCount;
+              pendingAmount += kidsPrice;
+              newTotalPrice += kidsPrice;
+              reasonParts.push(`${addedKidsCount} children added ($${kidsPrice.toFixed(2)})`);
+            }
+          }
+        } catch (e) {
+          console.error('Error calculating spouse/kids pending from tiers:', e);
+        }
+
+        // --- Manual price override by admin (only when no spouse/kids were detected) ---
+        if (pendingAmount === 0 && (updateData as any).pendingPaymentReason) {
+          const incomingPrice = Number((updateData as any).totalPrice);
+          if (Number.isFinite(incomingPrice) && incomingPrice > oldTotalPrice) {
+            const priceDiff = incomingPrice - oldTotalPrice;
+            pendingAmount += priceDiff;
+            newTotalPrice = incomingPrice;
+            reasonParts.push(`Price increased by admin from $${oldTotalPrice.toFixed(2)} to $${incomingPrice.toFixed(2)}`);
+          } else if (Number.isFinite(incomingPrice) && incomingPrice < oldTotalPrice) {
+            newTotalPrice = incomingPrice;
           }
         }
         
@@ -1103,11 +1061,10 @@ export class RegistrationController {
           if (!existingRow.original_total_price) {
             dbPayload.original_total_price = oldTotalPrice;
           }
-        } else if (pendingAmount === 0 && existingRow.pending_payment_amount) {
-          dbPayload.pending_payment_amount = 0;
-          dbPayload.pending_payment_reason = null;
-          dbPayload.pending_payment_created_at = null;
         }
+        // Do not clear pending_payment_amount when pendingAmount === 0 on this request.
+        // Admin edits that don't add new charges (name fixes, toggling spouse off, etc.)
+        // must leave any existing unpaid balance in the DB until payment completes or admin marks paid.
 
         // If admin manually marks as paid AND there is no new pending balance,
         // update paid_amount to match total_price.
@@ -1156,12 +1113,6 @@ export class RegistrationController {
         }
 
         dbPayload.paid_amount = newPaidAmount;
-
-        // If paid_amount exceeds total_price (e.g. card fee included),
-        // bump total_price to match so future pending calculations stay correct.
-        if (newPaidAmount > totalPrice) {
-          dbPayload.total_price = newPaidAmount;
-        }
 
         dbPayload.pending_payment_amount = 0;
         dbPayload.pending_payment_reason = null;
