@@ -7,6 +7,22 @@
  *   npx ts-node src/scripts/fixRegistrationPrices.ts
  *   OR
  *   npm run fix-prices (if added to package.json)
+ *   OR
+ *   npm run fix-prices (if added to package.json)
+ *   OR
+ *   npm run fix-prices (if added to package.json)
+ *   OR
+ *   npm run fix-prices (if added to package.json)
+ *   OR
+ *   npm run fix-prices (if added to package.json)
+ *   OR
+ *   npm run fix-prices (if added to package.json)
+ *   OR
+ *   npm run fix-prices (if added to package.json)
+ *   OR
+ *   npm run fix-prices (if added to package.json)
+ *   OR
+ *   npm run fix-prices (if added to package.json)
  */
 
 import dotenv from 'dotenv';

@@ -2,6 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Registration, Event, COMPANY_TYPES, MASSAGE_TIME_SLOTS, MEAL_OPTIONS, PAYMENT_METHODS } from '../types';
 import { Modal } from './Modal';
 import { getActivityNames } from '../utils/eventUtils';
+import {
+  getCurrentEasternTimeMs,
+  getEasternTimeEndOfDay,
+  pickActivePricingTier,
+} from '../utils/pricingTierUtils';
 import '../styles/RegistrationModal.css';
 
 interface RegistrationModalProps {
@@ -81,27 +86,15 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
   const spouseTiers = useMemo(() => event.spousePricing || [], [event.spousePricing]);
   const breakfastEnd = event.breakfastEndDate;
 
-  // Calculate total price based on selections
+  // Calculate total price based on selections (Eastern Time; same tier rules as backend)
   useEffect(() => {
-    const now = Date.now();
-    const withBounds = (arr:any[]=[]) => (arr)
-      .map((t:any)=>({ ...t, s: t.startDate ? new Date(t.startDate).getTime() : -Infinity, e: t.endDate ? new Date(t.endDate).getTime() : Infinity }))
-      .sort((a:any,b:any)=> (a.s - b.s));
-    const pickTier = (tiers:any[]) => {
-      if (!tiers || tiers.length===0) return null;
-      const active = tiers.find(t => now>=t.s && now<=t.e);
-      if (active) return active;
-      if (now < tiers[0].s) return tiers[0];
-      if (now > tiers[tiers.length-1].e) return tiers[tiers.length-1];
-      const upcoming = tiers.find(t => now < t.s);
-      return upcoming || tiers[tiers.length-1];
-    };
-    const regActive = pickTier(withBounds(regTiers));
-    const spouseActive = pickTier(withBounds(spouseTiers));
-    let total = regActive?.price ?? 675;
-    if (spouseDinnerSelected) total += (spouseActive?.price ?? 200);
+    const now = getCurrentEasternTimeMs();
+    const regActive = pickActivePricingTier(regTiers, now);
+    const spouseActive = pickActivePricingTier(spouseTiers, now);
+    let total = typeof regActive?.price === 'number' ? regActive.price : 675;
+    if (spouseDinnerSelected) total += typeof spouseActive?.price === 'number' ? spouseActive.price : 0;
     if (spouseBreakfastSelected && typeof event.breakfastPrice === 'number') {
-      const endOk = breakfastEnd ? (now <= new Date(breakfastEnd).getTime()) : true;
+      const endOk = breakfastEnd ? now <= getEasternTimeEndOfDay(String(breakfastEnd)) : true;
       if (endOk) total += event.breakfastPrice;
     }
     setFormData(prev => ({ ...prev, totalPrice: total }));
@@ -811,26 +804,13 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
                       onChange={(e) => {
                         setPriceOverrideEnabled(e.target.checked);
                         if (!e.target.checked) {
-                          // Reset to calculated price when disabled
-                          const now = Date.now();
-                          const withBounds = (arr: any[] = []) => (arr)
-                            .map((t: any) => ({ ...t, s: t.startDate ? new Date(t.startDate).getTime() : -Infinity, e: t.endDate ? new Date(t.endDate).getTime() : Infinity }))
-                            .sort((a: any, b: any) => (a.s - b.s));
-                          const pickTier = (tiers: any[]) => {
-                            if (!tiers || tiers.length === 0) return null;
-                            const active = tiers.find(t => now >= t.s && now <= t.e);
-                            if (active) return active;
-                            if (now < tiers[0].s) return tiers[0];
-                            if (now > tiers[tiers.length - 1].e) return tiers[tiers.length - 1];
-                            const upcoming = tiers.find(t => now < t.s);
-                            return upcoming || tiers[tiers.length - 1];
-                          };
-                          const regActive = pickTier(withBounds(regTiers));
-                          const spouseActive = pickTier(withBounds(spouseTiers));
-                          let total = regActive?.price ?? 675;
-                          if (spouseDinnerSelected) total += (spouseActive?.price ?? 200);
+                          const now = getCurrentEasternTimeMs();
+                          const regActive = pickActivePricingTier(regTiers, now);
+                          const spouseActive = pickActivePricingTier(spouseTiers, now);
+                          let total = typeof regActive?.price === 'number' ? regActive.price : 675;
+                          if (spouseDinnerSelected) total += typeof spouseActive?.price === 'number' ? spouseActive.price : 0;
                           if (spouseBreakfastSelected && typeof event.breakfastPrice === 'number') {
-                            const endOk = breakfastEnd ? (now <= new Date(breakfastEnd).getTime()) : true;
+                            const endOk = breakfastEnd ? now <= getEasternTimeEndOfDay(String(breakfastEnd)) : true;
                             if (endOk) total += event.breakfastPrice;
                           }
                           setPriceOverride(total);

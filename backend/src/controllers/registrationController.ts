@@ -551,7 +551,8 @@ export class RegistrationController {
             total += pricePerKid * registration.kids.length;
           }
           
-          registration.totalPrice = total || registration.totalPrice || 0;
+          // Prefer server-calculated package total so client-sent totalPrice cannot skew stored totals
+          registration.totalPrice = total;
           
           // Apply discount code ONLY if the client did not already apply it
           // (Card payment flows send discountAmount pre-calculated, so we shouldn't re-apply)

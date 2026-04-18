@@ -13,157 +13,10 @@ import { getActivityNames, getActivitySeatLimit } from '../../utils/eventUtils';
 import { COUNTRY_OPTIONS, getRegionOptionsForCountry, normalizeCountryCode } from '../../utils/addressOptions';
 import apiClient from '../../services/apiClient';
 import '../../styles/RegistrationModal.css';
-
-/**
- * Helper function to convert a date string (YYYY-MM-DD) to Eastern Time midnight
- * Florida uses Eastern Time (America/New_York timezone)
- * Returns the UTC timestamp that represents midnight Eastern Time on the given date
- * 
- * This function handles DST automatically by using Intl.DateTimeFormat
- */
-function getEasternTimeMidnight(dateString: string): number {
-  if (!dateString) return -Infinity;
-  
-  try {
-    // Parse the date string
-    const [year, month, day] = dateString.split('-').map(Number);
-    if (!year || !month || !day || isNaN(year) || isNaN(month) || isNaN(day)) {
-      // Fallback to UTC parsing
-      return new Date(dateString + 'T00:00:00Z').getTime();
-    }
-    
-    // Strategy: Find the UTC timestamp that, when converted to Eastern Time, equals midnight
-    // Start with UTC midnight on that date
-    let guessUtc = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
-    
-    // Check what Eastern time this UTC time represents
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    });
-    
-    let easternTime = formatter.format(guessUtc);
-    let [easternHour, easternMinute] = easternTime.split(':').map(Number);
-    
-    // Adjust until we get midnight Eastern (00:00)
-    let iterations = 0;
-    while ((easternHour !== 0 || easternMinute !== 0) && iterations < 10) {
-      // Calculate adjustment needed
-      const hoursToSubtract = easternHour;
-      const minutesToSubtract = easternMinute;
-      const adjustmentMs = (hoursToSubtract * 60 + minutesToSubtract) * 60 * 1000;
-      
-      guessUtc = new Date(guessUtc.getTime() - adjustmentMs);
-      
-      easternTime = formatter.format(guessUtc);
-      [easternHour, easternMinute] = easternTime.split(':').map(Number);
-      iterations++;
-    }
-    
-    return guessUtc.getTime();
-  } catch (error) {
-    // Fallback to UTC parsing if Eastern Time conversion fails
-    console.warn(`Failed to parse date ${dateString} as Eastern Time, using UTC:`, error);
-    return new Date(dateString + 'T00:00:00Z').getTime();
-  }
-}
-
-/**
- * Get Eastern Time end of day for a date string
- * Returns the start of the next day (exclusive) to ensure the full end date is included
- * Example: For Dec 11, returns Dec 12 00:00:00 Eastern Time
- * This way, any time on Dec 11 will be < Dec 12 00:00:00, so it's included
- */
-function getEasternTimeEndOfDay(dateString: string): number {
-  if (!dateString) return Infinity;
-  
-  try {
-    const [year, month, day] = dateString.split('-').map(Number);
-    if (!year || !month || !day || isNaN(year) || isNaN(month) || isNaN(day)) {
-      // Fallback: add 1 day and get midnight
-      const fallbackDate = new Date(dateString + 'T00:00:00Z');
-      fallbackDate.setUTCDate(fallbackDate.getUTCDate() + 1);
-      return getEasternTimeMidnight(`${fallbackDate.getUTCFullYear()}-${String(fallbackDate.getUTCMonth() + 1).padStart(2, '0')}-${String(fallbackDate.getUTCDate()).padStart(2, '0')}`);
-    }
-    
-    // Next calendar day (UTC date math), then Eastern midnight — avoids server local TZ skew
-    const ymd = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const [yy, mm, dd] = ymd.split('-').map(Number);
-    const dt = new Date(Date.UTC(yy, mm - 1, dd));
-    dt.setUTCDate(dt.getUTCDate() + 1);
-    const nextDayStr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
-    return getEasternTimeMidnight(nextDayStr);
-  } catch (error) {
-    console.warn(`Failed to parse end date ${dateString} as Eastern Time, using UTC:`, error);
-    const fallbackDate = new Date(dateString + 'T00:00:00Z');
-    fallbackDate.setUTCDate(fallbackDate.getUTCDate() + 1);
-    return fallbackDate.getTime();
-  }
-}
-
-/**
- * Get current time converted to Eastern Time for comparison
- * Returns a UTC timestamp that represents the current Eastern Time
- * This can be directly compared with Eastern Time midnight timestamps
- */
-function getCurrentEasternTime(): number {
-  const now = new Date();
-  
-  // Get current date/time components in Eastern Time
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  });
-  
-  const parts = formatter.formatToParts(now);
-  const year = parseInt(parts.find(p => p.type === 'year')?.value || '0');
-  const month = parseInt(parts.find(p => p.type === 'month')?.value || '0') - 1;
-  const day = parseInt(parts.find(p => p.type === 'day')?.value || '0');
-  const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
-  const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
-  const second = parseInt(parts.find(p => p.type === 'second')?.value || '0');
-  
-  // Get the Eastern Time midnight for today's date
-  const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  const easternMidnight = getEasternTimeMidnight(dateStr);
-  
-  // Add the hours, minutes, seconds to get the current time in Eastern Time
-  // This gives us a UTC timestamp that represents the current Eastern Time
-  const hoursMs = hour * 60 * 60 * 1000;
-  const minutesMs = minute * 60 * 1000;
-  const secondsMs = second * 1000;
-  
-  return easternMidnight + hoursMs + minutesMs + secondsMs;
-}
-
-function mapTiersWithBounds(tiers: any[]): any[] {
-  return (tiers || [])
-    .map((t: any) => ({
-      ...t,
-      s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-      e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
-    }))
-    .sort((a: any, b: any) => a.s - b.s);
-}
-
-function pickActiveTierRecord(tiers: any[], now: number): any | null {
-  const arr = mapTiersWithBounds(tiers);
-  if (!arr.length) return null;
-  const hit = arr.find((t: any) => now >= t.s && now < t.e);
-  if (hit) return hit;
-  if (now < arr[0].s) return arr[0];
-  if (now >= arr[arr.length - 1].e) return arr[arr.length - 1];
-  const upcoming = arr.find((t: any) => now < t.s);
-  return upcoming || arr[arr.length - 1];
-}
+import {
+  getCurrentEasternTimeMs as getCurrentEasternTime,
+  pickActivePricingTier,
+} from '../../utils/pricingTierUtils';
 
 /** Per-tier line amounts; sum aligns with tier-based package total (before discount code). */
 function computePackageLineAmounts(opts: {
@@ -174,16 +27,16 @@ function computePackageLineAmounts(opts: {
   kidsCount: number;
 }) {
   const now = getCurrentEasternTime();
-  const reg = pickActiveTierRecord(opts.registrationPricing, now);
+  const reg = pickActivePricingTier(opts.registrationPricing, now);
   const conference = typeof reg?.price === 'number' ? reg.price : 675;
   let spouse = 0;
   if (opts.spouseSelected) {
-    const st = pickActiveTierRecord(opts.spousePricing, now);
-    spouse = typeof st?.price === 'number' ? st.price : 200;
+    const st = pickActivePricingTier(opts.spousePricing, now);
+    spouse = typeof st?.price === 'number' ? st.price : 0;
   }
   let kids = 0;
   if (opts.kidsCount > 0) {
-    const kt = pickActiveTierRecord(opts.kidsPricing, now);
+    const kt = pickActivePricingTier(opts.kidsPricing, now);
     const per = typeof kt?.price === 'number' ? kt.price : 0;
     kids = per * opts.kidsCount;
   }
@@ -544,14 +397,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
     // For new registrations, calculate base price only (no spouse, no kids)
     if (event) {
       const now = getCurrentEasternTime();
-      const regTiers = (event.registrationPricing || []).map((t: any) => ({
-        ...t,
-        s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-        e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-      })).sort((a: any, b: any) => a.s - b.s);
-      const regActive = regTiers.find((t: any) => now >= t.s && now < t.e) ||
-        (now < regTiers[0]?.s ? regTiers[0] : (now >= regTiers[regTiers.length - 1]?.e ? regTiers[regTiers.length - 1] : (regTiers.find((t: any) => now < t.s) || regTiers[regTiers.length - 1])));
-      return regActive?.price ?? 675;
+      const regActive = pickActivePricingTier(event.registrationPricing || [], now);
+      return typeof regActive?.price === 'number' ? regActive.price : 675;
     }
     return 675;
   }, [registration, event]);
@@ -602,25 +449,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
       if (isAddingSpouse && !isAddingKids) {
         const originalRegPrice = registration?.totalPrice || 675;
         const now = getCurrentEasternTime();
-        const withBounds = (arr: any[] = []) =>
-          arr
-            .map((t: any) => ({
-              ...t,
-              s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-              e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
-            }))
-            .sort((a: any, b: any) => a.s - b.s);
-        const pickTier = (tiers: any[]) => {
-          if (!tiers || tiers.length === 0) return null;
-          const active = tiers.find(t => now >= t.s && now < t.e);
-          if (active) return active;
-          if (now < tiers[0].s) return tiers[0];
-          if (now >= tiers[tiers.length - 1].e) return tiers[tiers.length - 1];
-          const upcoming = tiers.find(t => now < t.s);
-          return upcoming || tiers[tiers.length - 1];
-        };
-        const spouseActive = pickTier(withBounds(spouseTiers));
-        const spousePrice = spouseActive?.price ?? 200;
+        const spouseActive = pickActivePricingTier(spouseTiers, now);
+        const spousePrice = typeof spouseActive?.price === 'number' ? spouseActive.price : 0;
         const total = originalRegPrice + spousePrice;
         setFormData(prev => ({ ...prev, totalPrice: total }));
         return;
@@ -630,25 +460,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
       if (isAddingKids && !isAddingSpouse) {
         const originalRegPrice = registration?.totalPrice || 675;
         const now = getCurrentEasternTime();
-        const withBounds = (arr: any[] = []) =>
-          arr
-            .map((t: any) => ({
-              ...t,
-              s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-              e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
-            }))
-            .sort((a: any, b: any) => a.s - b.s);
-        const pickTier = (tiers: any[]) => {
-          if (!tiers || tiers.length === 0) return null;
-          const active = tiers.find(t => now >= t.s && now < t.e);
-          if (active) return active;
-          if (now < tiers[0].s) return tiers[0];
-          if (now >= tiers[tiers.length - 1].e) return tiers[tiers.length - 1];
-          const upcoming = tiers.find(t => now < t.s);
-          return upcoming || tiers[tiers.length - 1];
-        };
-        const kidsActive = pickTier(withBounds(kidsTiers));
-        const pricePerKid = kidsActive?.price ?? 50;
+        const kidsActive = pickActivePricingTier(kidsTiers, now);
+        const pricePerKid = typeof kidsActive?.price === 'number' ? kidsActive.price : 0;
         const newKidsCount = kids.length - originalKidsCount;
         const kidsPrice = pricePerKid * newKidsCount;
         const total = originalRegPrice + kidsPrice;
@@ -660,27 +473,10 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
       if (isAddingSpouse && isAddingKids) {
         const originalRegPrice = registration?.totalPrice || 675;
         const now = getCurrentEasternTime();
-        const withBounds = (arr: any[] = []) =>
-          arr
-            .map((t: any) => ({
-              ...t,
-              s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-              e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
-            }))
-            .sort((a: any, b: any) => a.s - b.s);
-        const pickTier = (tiers: any[]) => {
-          if (!tiers || tiers.length === 0) return null;
-          const active = tiers.find(t => now >= t.s && now < t.e);
-          if (active) return active;
-          if (now < tiers[0].s) return tiers[0];
-          if (now >= tiers[tiers.length - 1].e) return tiers[tiers.length - 1];
-          const upcoming = tiers.find(t => now < t.s);
-          return upcoming || tiers[tiers.length - 1];
-        };
-        const spouseActive = pickTier(withBounds(spouseTiers));
-        const spousePrice = spouseActive?.price ?? 200;
-        const kidsActive = pickTier(withBounds(kidsTiers));
-        const pricePerKid = kidsActive?.price ?? 50;
+        const spouseActive = pickActivePricingTier(spouseTiers, now);
+        const spousePrice = typeof spouseActive?.price === 'number' ? spouseActive.price : 0;
+        const kidsActive = pickActivePricingTier(kidsTiers, now);
+        const pricePerKid = typeof kidsActive?.price === 'number' ? kidsActive.price : 0;
         const newKidsCount = kids.length - originalKidsCount;
         const kidsPrice = pricePerKid * newKidsCount;
         const total = originalRegPrice + spousePrice + kidsPrice;
@@ -692,70 +488,24 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
     // For paid registrations where spouse is being added, preserve original registration price
     // and only calculate spouse tier price
     if (isAlreadyPaid && formData.spouseDinnerTicket && !hadSpouseTicket) {
-      // Adding spouse to paid registration - preserve original reg price, calculate spouse price
       const originalRegPrice = registration?.totalPrice || 675;
       const now = getCurrentEasternTime();
-    const withBounds = (arr: any[] = []) =>
-      arr
-        .map((t: any) => ({
-          ...t,
-            s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-            e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
-        }))
-        .sort((a: any, b: any) => a.s - b.s);
-    const pickTier = (tiers: any[]) => {
-      if (!tiers || tiers.length === 0) return null;
-        const active = tiers.find(t => now >= t.s && now < t.e);
-      if (active) return active;
-      if (now < tiers[0].s) return tiers[0];
-        if (now >= tiers[tiers.length - 1].e) return tiers[tiers.length - 1];
-        const upcoming = tiers.find(t => now < t.s);
-        return upcoming || tiers[tiers.length - 1];
-      };
-      const spouseActive = pickTier(withBounds(spouseTiers));
-      const spousePrice = spouseActive?.price ?? 200;
+      const spouseActive = pickActivePricingTier(spouseTiers, now);
+      const spousePrice = typeof spouseActive?.price === 'number' ? spouseActive.price : 0;
       const total = originalRegPrice + spousePrice;
       setFormData(prev => ({ ...prev, totalPrice: total }));
       return;
     }
 
-    // For new registrations or unpaid registrations, calculate price based on current tier
-    // Use Eastern Time (Florida timezone) for tier date comparisons to match backend
+    // For new registrations or unpaid registrations, calculate price based on current tier (matches backend)
     const now = getCurrentEasternTime();
-    
-    const withBounds = (arr: any[] = []) =>
-      arr
-        .map((t: any) => ({
-          ...t,
-          // Convert tier dates to Eastern Time midnight/end-of-day to match backend
-          s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-          e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
-        }))
-        .sort((a: any, b: any) => a.s - b.s);
-    const pickTier = (tiers: any[]) => {
-      if (!tiers || tiers.length === 0) return null;
-      // Find active tier: now >= startDate AND now < endDate (end date is exclusive - start of next day)
-      const active = tiers.find(t => now >= t.s && now < t.e);
-      if (active) return active;
-      // If before first tier, return first tier
-      if (now < tiers[0].s) return tiers[0];
-      // If after last tier, return last tier
-      if (now >= tiers[tiers.length - 1].e) return tiers[tiers.length - 1];
-      // Find next upcoming tier
-      const upcoming = tiers.find(t => now < t.s);
-      return upcoming || tiers[tiers.length - 1];
-    };
-    const regActive = pickTier(withBounds(regTiers));
-    const spouseActive = pickTier(withBounds(spouseTiers));
-    const kidsActive = pickTier(withBounds(kidsTiers));
-    let total = regActive?.price ?? 675;
-    if (spouseDinnerSelected) total += spouseActive?.price ?? 200;
-    // Calculate kids price: calculate from tiers (admin override commented out)
+    const regActive = pickActivePricingTier(regTiers, now);
+    const spouseActive = pickActivePricingTier(spouseTiers, now);
+    const kidsActive = pickActivePricingTier(kidsTiers, now);
+    let total = typeof regActive?.price === 'number' ? regActive.price : 675;
+    if (spouseDinnerSelected) total += typeof spouseActive?.price === 'number' ? spouseActive.price : 0;
     if (kids.length > 0) {
-      // const kidsPrice = formData.kidsTotalPrice !== undefined 
-      //   ? formData.kidsTotalPrice 
-      //   : (kidsActive?.price ?? 0) * kids.length;
-      const kidsPrice = (kidsActive?.price ?? 0) * kids.length;
+      const kidsPrice = (typeof kidsActive?.price === 'number' ? kidsActive.price : 0) * kids.length;
       total += kidsPrice;
     }
     // if (childLunchSelected) total += childLunchPrice;
@@ -1182,15 +932,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
       
       // Calculate spouse-only price using Eastern Time to match backend
       const now = getCurrentEasternTime();
-      const tiers = (event.spousePricing || []).map((t: any) => ({
-        ...t,
-        s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-        e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-      })).sort((a: any, b: any) => a.s - b.s);
-      // Find active tier: now >= startDate AND now < endDate (end date is exclusive - start of next day)
-      const active = tiers.find((t: any) => now >= t.s && now < t.e) ||
-        (now < tiers[0]?.s ? tiers[0] : (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
-      let spousePrice = active?.price ?? 0;
+      const active = pickActivePricingTier(event.spousePricing || [], now);
+      let spousePrice = typeof active?.price === 'number' ? active.price : 0;
       
       // Apply discount if discount code is valid
       if (discountCodeData && typeof discountCodeData.discountValue === 'number') {
@@ -1305,14 +1048,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
         discountCode: discountCodeInput.trim() || undefined,
         discountAmount: discountCodeData && typeof discountCodeData.discountValue === 'number' ? (() => {
           const now = getCurrentEasternTime();
-          const tiers = (event.spousePricing || []).map((t: any) => ({
-            ...t,
-            s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-            e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-          })).sort((a: any, b: any) => a.s - b.s);
-          const active = tiers.find((t: any) => now >= t.s && now < t.e) ||
-            (now < tiers[0]?.s ? tiers[0] : (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
-          const spousePrice = active?.price ?? 0;
+          const active = pickActivePricingTier(event.spousePricing || [], now);
+          const spousePrice = typeof active?.price === 'number' ? active.price : 0;
           let discountAmount = 0;
           if (discountCodeData.discountType === 'percentage') {
             discountAmount = (spousePrice * discountCodeData.discountValue) / 100;
@@ -1394,15 +1131,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
       
       // Calculate kids-only price using Eastern Time to match backend
       const now = getCurrentEasternTime();
-      const tiers = (event.kidsPricing || []).map((t: any) => ({
-        ...t,
-        s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-        e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-      })).sort((a: any, b: any) => a.s - b.s);
-      // Find active tier
-      const active = tiers.find((t: any) => now >= t.s && now < t.e) ||
-        (now < tiers[0]?.s ? tiers[0] : (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
-      const pricePerKid = active?.price ?? 0;
+      const active = pickActivePricingTier(event.kidsPricing || [], now);
+      const pricePerKid = typeof active?.price === 'number' ? active.price : 0;
       // Only calculate price for NEW children being added
       const newKidsCount = kids.length - originalKidsCount;
       let kidsPrice = pricePerKid * newKidsCount;
@@ -1529,14 +1259,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
         discountCode: discountCodeInput.trim() || undefined,
         discountAmount: discountCodeData && typeof discountCodeData.discountValue === 'number' ? (() => {
           const now = getCurrentEasternTime();
-          const tiers = (event.kidsPricing || []).map((t: any) => ({
-            ...t,
-            s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-            e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-          })).sort((a: any, b: any) => a.s - b.s);
-          const active = tiers.find((t: any) => now >= t.s && now < t.e) ||
-            (now < tiers[0]?.s ? tiers[0] : (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
-          const pricePerKid = active?.price ?? 0;
+          const active = pickActivePricingTier(event.kidsPricing || [], now);
+          const pricePerKid = typeof active?.price === 'number' ? active.price : 0;
           // Only calculate price for NEW children being added
           const newKidsCount = kids.length - originalKidsCount;
           const kidsPrice = pricePerKid * newKidsCount;
@@ -1633,26 +1357,10 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
       
       // Calculate combined price (spouse + kids) using Eastern Time to match backend
       const now = getCurrentEasternTime();
-      
-      // Calculate spouse price
-      const spouseTiers = (event.spousePricing || []).map((t: any) => ({
-        ...t,
-        s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-        e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-      })).sort((a: any, b: any) => a.s - b.s);
-      const spouseActive = spouseTiers.find((t: any) => now >= t.s && now < t.e) ||
-        (now < spouseTiers[0]?.s ? spouseTiers[0] : (now >= spouseTiers[spouseTiers.length - 1]?.e ? spouseTiers[spouseTiers.length - 1] : (spouseTiers.find((t: any) => now < t.s) || spouseTiers[spouseTiers.length - 1])));
-      const spousePrice = spouseActive?.price ?? 0;
-      
-      // Calculate kids price
-      const kidsTiers = (event.kidsPricing || []).map((t: any) => ({
-        ...t,
-        s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-        e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-      })).sort((a: any, b: any) => a.s - b.s);
-      const kidsActive = kidsTiers.find((t: any) => now >= t.s && now < t.e) ||
-        (now < kidsTiers[0]?.s ? kidsTiers[0] : (now >= kidsTiers[kidsTiers.length - 1]?.e ? kidsTiers[kidsTiers.length - 1] : (kidsTiers.find((t: any) => now < t.s) || kidsTiers[kidsTiers.length - 1])));
-      const pricePerKid = kidsActive?.price ?? 0;
+      const spouseActive = pickActivePricingTier(event.spousePricing || [], now);
+      const spousePrice = typeof spouseActive?.price === 'number' ? spouseActive.price : 0;
+      const kidsActive = pickActivePricingTier(event.kidsPricing || [], now);
+      const pricePerKid = typeof kidsActive?.price === 'number' ? kidsActive.price : 0;
       // Only calculate price for NEW children being added
       const newKidsCount = kids.length - originalKidsCount;
       const kidsPrice = pricePerKid * newKidsCount;
@@ -1789,22 +1497,10 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
         discountCode: discountCodeInput.trim() || undefined,
         discountAmount: discountCodeData && typeof discountCodeData.discountValue === 'number' ? (() => {
           const now = getCurrentEasternTime();
-          const spouseTiers = (event.spousePricing || []).map((t: any) => ({
-            ...t,
-            s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-            e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-          })).sort((a: any, b: any) => a.s - b.s);
-          const spouseActive = spouseTiers.find((t: any) => now >= t.s && now < t.e) ||
-            (now < spouseTiers[0]?.s ? spouseTiers[0] : (now >= spouseTiers[spouseTiers.length - 1]?.e ? spouseTiers[spouseTiers.length - 1] : (spouseTiers.find((t: any) => now < t.s) || spouseTiers[spouseTiers.length - 1])));
-          const spousePrice = spouseActive?.price ?? 0;
-          const kidsTiers = (event.kidsPricing || []).map((t: any) => ({
-            ...t,
-            s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-            e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-          })).sort((a: any, b: any) => a.s - b.s);
-          const kidsActive = kidsTiers.find((t: any) => now >= t.s && now < t.e) ||
-            (now < kidsTiers[0]?.s ? kidsTiers[0] : (now >= kidsTiers[kidsTiers.length - 1]?.e ? kidsTiers[kidsTiers.length - 1] : (kidsTiers.find((t: any) => now < t.s) || kidsTiers[kidsTiers.length - 1])));
-          const pricePerKid = kidsActive?.price ?? 0;
+          const spouseActive = pickActivePricingTier(event.spousePricing || [], now);
+          const spousePrice = typeof spouseActive?.price === 'number' ? spouseActive.price : 0;
+          const kidsActive = pickActivePricingTier(event.kidsPricing || [], now);
+          const pricePerKid = typeof kidsActive?.price === 'number' ? kidsActive.price : 0;
           // Only calculate price for NEW children being added
           const newKidsCount = kids.length - originalKidsCount;
           const kidsPrice = pricePerKid * newKidsCount;
@@ -3506,38 +3202,17 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                         } else {
                           // Reset to calculated price when disabled
                           const now = getCurrentEasternTime();
-                          const regTiers = (event?.registrationPricing || []).map((t: any) => ({
-                            ...t,
-                            s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                            e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-                          })).sort((a: any, b: any) => a.s - b.s);
-                          const regActive = regTiers.find((t: any) => now >= t.s && now < t.e) ||
-                            (now < regTiers[0]?.s ? regTiers[0] : (now >= regTiers[regTiers.length - 1]?.e ? regTiers[regTiers.length - 1] : (regTiers.find((t: any) => now < t.s) || regTiers[regTiers.length - 1])));
-                          let total = regActive?.price ?? 675;
-                          
+                          const regActive = pickActivePricingTier(event?.registrationPricing || [], now);
+                          let total = typeof regActive?.price === 'number' ? regActive.price : 675;
                           if (formData.spouseDinnerTicket) {
-                            const spouseTiers = (event?.spousePricing || []).map((t: any) => ({
-                              ...t,
-                              s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                              e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-                            })).sort((a: any, b: any) => a.s - b.s);
-                            const spouseActive = spouseTiers.find((t: any) => now >= t.s && now < t.e) ||
-                              (now < spouseTiers[0]?.s ? spouseTiers[0] : (now >= spouseTiers[spouseTiers.length - 1]?.e ? spouseTiers[spouseTiers.length - 1] : (spouseTiers.find((t: any) => now < t.s) || spouseTiers[spouseTiers.length - 1])));
-                            total += (spouseActive?.price ?? 200);
+                            const sa = pickActivePricingTier(event?.spousePricing || [], now);
+                            total += typeof sa?.price === 'number' ? sa.price : 0;
                           }
-                          
                           if (kids.length > 0) {
-                            const kidsTiers = (event?.kidsPricing || []).map((t: any) => ({
-                              ...t,
-                              s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                              e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-                            })).sort((a: any, b: any) => a.s - b.s);
-                            const kidsActive = kidsTiers.find((t: any) => now >= t.s && now < t.e) ||
-                              (now < kidsTiers[0]?.s ? kidsTiers[0] : (now >= kidsTiers[kidsTiers.length - 1]?.e ? kidsTiers[kidsTiers.length - 1] : (kidsTiers.find((t: any) => now < t.s) || kidsTiers[kidsTiers.length - 1])));
-                            const pricePerKid = kidsActive?.price ?? 50;
+                            const ka = pickActivePricingTier(event?.kidsPricing || [], now);
+                            const pricePerKid = typeof ka?.price === 'number' ? ka.price : 0;
                             total += pricePerKid * kids.length;
                           }
-                          
                           setPriceOverride(total);
                           setFormData(prev => ({ ...prev, totalPrice: total }));
                         }
@@ -3755,56 +3430,21 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                   // If adding spouse or kids to paid registration, only calculate the new amount
                   let baseTotal: number;
                   if (isAddingSpouse && isAddingKids) {
-                    // Calculate combined price (spouse + kids) using current tier
                     const now = getCurrentEasternTime();
-                    
-                    // Calculate spouse price
-                    const spouseTiers = (event.spousePricing || []).map((t: any) => ({
-                      ...t,
-                      s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                      e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-                    })).sort((a: any, b: any) => a.s - b.s);
-                    const spouseActive = spouseTiers.find((t: any) => now >= t.s && now < t.e) ||
-                      (now < spouseTiers[0]?.s ? spouseTiers[0] : (now >= spouseTiers[spouseTiers.length - 1]?.e ? spouseTiers[spouseTiers.length - 1] : (spouseTiers.find((t: any) => now < t.s) || spouseTiers[spouseTiers.length - 1])));
-                    const spousePrice = spouseActive?.price ?? 0;
-                    
-                    // Calculate kids price
-                    const kidsTiers = (event.kidsPricing || []).map((t: any) => ({
-                      ...t,
-                      s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                      e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-                    })).sort((a: any, b: any) => a.s - b.s);
-                    const kidsActive = kidsTiers.find((t: any) => now >= t.s && now < t.e) ||
-                      (now < kidsTiers[0]?.s ? kidsTiers[0] : (now >= kidsTiers[kidsTiers.length - 1]?.e ? kidsTiers[kidsTiers.length - 1] : (kidsTiers.find((t: any) => now < t.s) || kidsTiers[kidsTiers.length - 1])));
-                    const pricePerKid = kidsActive?.price ?? 0;
-                    // Only calculate price for NEW children being added
+                    const spouseActive = pickActivePricingTier(event.spousePricing || [], now);
+                    const spousePrice = typeof spouseActive?.price === 'number' ? spouseActive.price : 0;
+                    const kidsActive = pickActivePricingTier(event.kidsPricing || [], now);
+                    const pricePerKid = typeof kidsActive?.price === 'number' ? kidsActive.price : 0;
                     const newKidsCount = kids.length - originalKidsCount;
-                    const kidsPrice = pricePerKid * newKidsCount;
-                    
-                    baseTotal = spousePrice + kidsPrice;
+                    baseTotal = spousePrice + pricePerKid * newKidsCount;
                   } else if (isAddingSpouse) {
-                    // Calculate only spouse price using current tier
                     const now = getCurrentEasternTime();
-                    const tiers = (event.spousePricing || []).map((t: any) => ({
-                      ...t,
-                      s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                      e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-                    })).sort((a: any, b: any) => a.s - b.s);
-                    const active = tiers.find((t: any) => now >= t.s && now < t.e) ||
-                      (now < tiers[0]?.s ? tiers[0] : (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
-                    baseTotal = active?.price ?? 0;
+                    const active = pickActivePricingTier(event.spousePricing || [], now);
+                    baseTotal = typeof active?.price === 'number' ? active.price : 0;
                   } else if (isAddingKids) {
-                    // Calculate only NEW kids price using current tier (not all kids)
                     const now = getCurrentEasternTime();
-                    const tiers = (event.kidsPricing || []).map((t: any) => ({
-                      ...t,
-                      s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                      e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-                    })).sort((a: any, b: any) => a.s - b.s);
-                    const active = tiers.find((t: any) => now >= t.s && now < t.e) ||
-                      (now < tiers[0]?.s ? tiers[0] : (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
-                    const pricePerKid = active?.price ?? 0;
-                    // Only calculate price for NEW children being added
+                    const active = pickActivePricingTier(event.kidsPricing || [], now);
+                    const pricePerKid = typeof active?.price === 'number' ? active.price : 0;
                     const newKidsCount = kids.length - originalKidsCount;
                     baseTotal = pricePerKid * newKidsCount;
                   } else {
@@ -3894,17 +3534,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                           <span>${(function () {
                             if (isAddingKids || (isAddingSpouse && isAddingKids)) {
                               const now = getCurrentEasternTime();
-                              const tiers = (event.kidsPricing || []).map((t: any) => ({
-                                ...t,
-                                s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                                e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
-                              })).sort((a: any, b: any) => a.s - b.s);
-                              const active =
-                                tiers.find((t: any) => now >= t.s && now < t.e) ||
-                                (now < tiers[0]?.s ? tiers[0] :
-                                  (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] :
-                                    (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
-                              const pricePerKid = active?.price ?? 0;
+                              const active = pickActivePricingTier(event.kidsPricing || [], now);
+                              const pricePerKid = typeof active?.price === 'number' ? active.price : 0;
                               const kidsCount = kids.length - originalKidsCount;
                               return (pricePerKid * kidsCount).toFixed(2);
                             }
