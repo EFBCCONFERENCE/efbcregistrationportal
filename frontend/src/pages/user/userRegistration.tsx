@@ -4011,7 +4011,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
               if (!isAdminEdit && isAlreadyPaid && isAddingKids && paymentMethod === 'Card' && !isAddingSpouse) {
                 return (
                   <button type="button" className="btn btn-primary btn-save" onClick={handleKidsPayment} disabled={isSubmitting}>
-                    {isSubmitting ? 'Processing...' : `Pay for Children Registration (${kids.length} ${kids.length === 1 ? 'child' : 'children'})`}
+                    {isSubmitting ? 'Processing...' : 'Pay for Children Registration'}
                   </button>
                 );
               }
