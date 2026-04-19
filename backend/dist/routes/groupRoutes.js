@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const groupController_1 = require("../controllers/groupController");
+const auth_1 = require("../middleware/auth");
 const router = (0, express_1.Router)();
 let groupController;
 const initController = async () => {
@@ -30,19 +31,19 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
     await req.groupController.getGroupById(req, res);
 });
-router.post('/', async (req, res) => {
+router.post('/', auth_1.requireAdmin, async (req, res) => {
     await req.groupController.createGroup(req, res);
 });
-router.put('/:id', async (req, res) => {
+router.put('/:id', auth_1.requireAdmin, async (req, res) => {
     await req.groupController.updateGroup(req, res);
 });
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auth_1.requireAdmin, async (req, res) => {
     await req.groupController.deleteGroup(req, res);
 });
-router.post('/:id/members', async (req, res) => {
+router.post('/:id/members', auth_1.requireAdmin, async (req, res) => {
     await req.groupController.addMemberToGroup(req, res);
 });
-router.delete('/:id/members', async (req, res) => {
+router.delete('/:id/members', auth_1.requireAdmin, async (req, res) => {
     await req.groupController.removeMemberFromGroup(req, res);
 });
 exports.default = router;

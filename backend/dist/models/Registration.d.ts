@@ -64,7 +64,7 @@ export declare class Registration {
     childLastName?: string;
     childLunchTicket?: boolean;
     totalPrice: number;
-    paymentMethod: 'Card' | 'Check';
+    paymentMethod: 'Card' | 'Check' | 'Comp';
     name: string;
     category: string;
     createdAt?: string;
@@ -92,6 +92,7 @@ export declare class Registration {
     pendingPaymentAmount?: number;
     pendingPaymentReason?: string;
     pendingPaymentCreatedAt?: string;
+    updateNotes?: string;
     private normalizeEmail;
     private isSameEmail;
     private toTitleCaseName;

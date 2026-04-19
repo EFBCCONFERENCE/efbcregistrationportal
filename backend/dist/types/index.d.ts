@@ -111,7 +111,7 @@ export interface Registration {
     childLastName?: string;
     childLunchTicket?: boolean;
     totalPrice: number;
-    paymentMethod: 'Card' | 'Check';
+    paymentMethod: 'Card' | 'Check' | 'Comp';
     paid?: boolean;
     paidAt?: string;
     squarePaymentId?: string;
@@ -127,6 +127,7 @@ export interface Registration {
     pendingPaymentAmount?: number;
     pendingPaymentReason?: string;
     pendingPaymentCreatedAt?: string;
+    updateNotes?: string;
     name: string;
     category: string;
     createdAt?: string;
@@ -219,7 +220,7 @@ export interface CreateRegistrationRequest {
     spouseLastName?: string;
     spouseDinnerTicket: boolean;
     totalPrice: number;
-    paymentMethod: 'Card' | 'Check';
+    paymentMethod: 'Card' | 'Check' | 'Comp';
     name: string;
     category: string;
 }

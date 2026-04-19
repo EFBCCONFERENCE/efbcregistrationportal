@@ -2,6 +2,30 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Group = void 0;
 class Group {
+    static normalizeMembersInput(raw) {
+        let source = raw;
+        for (let i = 0; i < 5; i++) {
+            if (typeof source === 'string') {
+                const text = source.trim();
+                if (!text)
+                    return [];
+                try {
+                    source = JSON.parse(text);
+                }
+                catch {
+                    return [];
+                }
+            }
+            else {
+                break;
+            }
+        }
+        if (!Array.isArray(source))
+            return [];
+        return source
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id));
+    }
     formatDateForDB(dateValue) {
         if (!dateValue) {
             return new Date().toISOString().slice(0, 19).replace('T', ' ');
@@ -17,7 +41,7 @@ class Group {
         this.eventId = data.eventId || 1;
         this.category = data.category || 'Networking';
         this.name = data.name || '';
-        this.members = data.members || [];
+        this.members = Group.normalizeMembersInput(data.members ?? []);
         this.createdAt = data.createdAt || new Date().toISOString();
         this.updatedAt = data.updatedAt || new Date().toISOString();
     }
@@ -48,7 +72,7 @@ class Group {
             eventId: row.eventId,
             category: row.category,
             name: row.name,
-            members: row.members ? JSON.parse(row.members) : [],
+            members: Group.normalizeMembersInput(row.members),
             createdAt: row.created_at,
             updatedAt: row.updated_at
         });

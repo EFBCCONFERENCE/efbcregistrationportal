@@ -5,6 +5,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
+const helmet_1 = __importDefault(require("helmet"));
+const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const database_1 = __importDefault(require("./config/database"));
@@ -18,22 +20,40 @@ const cancellationRoutes_1 = __importDefault(require("./routes/cancellationRoute
 const paymentsRoutes_1 = __importDefault(require("./routes/paymentsRoutes"));
 const customizationRoutes_1 = __importDefault(require("./routes/customizationRoutes"));
 const discountCodeRoutes_1 = __importDefault(require("./routes/discountCodeRoutes"));
+const pairingRequestRoutes_1 = __importDefault(require("./routes/pairingRequestRoutes"));
 if ((process.env.NODE_ENV || '').toLowerCase() !== 'production') {
     dotenv_1.default.config();
 }
+if ((process.env.NODE_ENV || '').toLowerCase() === 'production' && !process.env.JWT_SECRET) {
+    console.error('FATAL: JWT_SECRET environment variable is required in production');
+    process.exit(1);
+}
 const app = (0, express_1.default)();
+app.use((0, helmet_1.default)());
 app.use((0, cors_1.default)({
     origin: process.env.FRONTEND_URL || 'http://localhost:3000',
     credentials: true
 }));
-app.use(express_1.default.json());
-app.use(express_1.default.urlencoded({ extended: true }));
+app.use(express_1.default.json({ limit: '1mb' }));
+app.use(express_1.default.urlencoded({ extended: true, limit: '1mb' }));
+const authLimiter = (0, express_rate_limit_1.default)({
+    windowMs: 10 * 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Too many requests, please try again later' },
+});
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);
+app.use('/api/auth/reset-password', authLimiter);
+app.use('/api/users/login', authLimiter);
 app.use('/api/users', userRoutes_1.default);
 app.use('/api/auth', authRoutes_1.default);
 app.use('/api/events', eventRoutes_1.default);
 app.use('/api/registrations', registrationRoutes_1.default);
 app.use('/api/groups', groupRoutes_1.default);
 app.use('/api', cancellationRoutes_1.default);
+app.use('/api', pairingRequestRoutes_1.default);
 app.use('/api/payments', paymentsRoutes_1.default);
 app.use('/api/customization', customizationRoutes_1.default);
 app.use('/api/discount-codes', discountCodeRoutes_1.default);
@@ -118,11 +138,6 @@ const createTables = async () => {
         spouse_last_name VARCHAR(255),
         total_price DECIMAL(10, 2),
         payment_method VARCHAR(50),
-        registration_tier_label VARCHAR(255) NULL,
-        spouse_tier_label VARCHAR(255) NULL,
-        spouse_added_at TIMESTAMP NULL,
-        kids_tier_label VARCHAR(255) NULL,
-        kids_added_at TIMESTAMP NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
@@ -131,6 +146,7 @@ const createTables = async () => {
         await migrateRegistrationsTable();
         await migrateEventsAndRegistrationsEnhancements();
         await migrateCancellationFeature();
+        await migratePairingRequests();
         await migrateEventDescriptionToArray();
         await migrateEventStartDate();
         await migrateEmailCustomizations();
@@ -148,6 +164,7 @@ const createTables = async () => {
         await migrateActivityWaitlist();
         await migrateTierTracking();
         await migrateTierTracking();
+        await migrateUpdateNotes();
         await databaseService.query(`
       CREATE TABLE IF NOT EXISTS \`activity_groups\` (
         id INT PRIMARY KEY AUTO_INCREMENT,
@@ -487,6 +504,22 @@ const migrateTierTracking = async () => {
     }
     catch (error) {
         console.error('Error migrating tier tracking columns:', error?.message || error);
+    }
+};
+const migrateUpdateNotes = async () => {
+    try {
+        const dbNameRows = await databaseService.query('SELECT DATABASE() as db');
+        const dbName = dbNameRows[0]?.db;
+        if (!dbName)
+            return;
+        const regCols = await databaseService.query('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?', [dbName, 'registrations']);
+        if (!regCols.some((c) => c.COLUMN_NAME === 'update_notes')) {
+            await databaseService.query('ALTER TABLE `registrations` ADD COLUMN `update_notes` TEXT NULL');
+            console.log('🛠️ Added registrations.update_notes column');
+        }
+    }
+    catch (error) {
+        console.error('Error migrating update_notes column:', error?.message || error);
     }
 };
 const migrateChildLunchFeature = async () => {
@@ -838,6 +871,32 @@ const migratePendingPaymentFields = async () => {
         console.error('Error migrating pending payment fields:', error?.message || error);
     }
 };
+const migratePairingRequests = async () => {
+    try {
+        await databaseService.query(`
+      CREATE TABLE IF NOT EXISTS pairing_requests (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        registration_id INT NOT NULL,
+        user_id INT NOT NULL,
+        event_id INT NOT NULL,
+        activity_label VARCHAR(255) NOT NULL,
+        partner_names JSON NULL,
+        boat_preference VARCHAR(255) NULL,
+        additional_notes TEXT NULL,
+        status ENUM('pending','acknowledged') DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (registration_id) REFERENCES registrations(id) ON DELETE CASCADE,
+        INDEX idx_pairing_reg (registration_id),
+        INDEX idx_pairing_status (status)
+      )
+    `);
+        console.log('🛠️ pairing_requests table created/verified');
+    }
+    catch (e) {
+        console.warn('⚠️ pairing_requests migration skipped:', e);
+    }
+};
 const migrateCancellationFeature = async () => {
     try {
         const dbNameRows = await databaseService.query('SELECT DATABASE() as db');
@@ -874,7 +933,7 @@ const migrateCancellationFeature = async () => {
       )`);
     }
     catch (e) {
-        console.warn('⚠️ Cancellation feature migration skipped:', e);
+        console.warn('Cancellation feature migration skipped:', e);
     }
 };
 app.get('/api/health', (req, res) => {
@@ -886,6 +945,12 @@ app.get('/api/health', (req, res) => {
     });
 });
 app.get('/api/demo/setup', async (req, res) => {
+    const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+    const allowDemoSetup = /^(1|true|yes)$/i.test(process.env.ALLOW_DEMO_SETUP || '');
+    if (isProduction && !allowDemoSetup) {
+        res.status(404).json({ success: false, error: 'Not found' });
+        return;
+    }
     try {
         if (!databaseService) {
             res.status(500).json({

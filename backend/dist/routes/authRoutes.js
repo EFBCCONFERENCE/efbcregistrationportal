@@ -21,10 +21,10 @@ router.post('/login', async (req, res) => {
         const rows = await db.query('SELECT id, name, email, role, password, email_verified_at FROM users WHERE email=? AND isActive=true LIMIT 1', [email]);
         const u = rows[0];
         if (!u)
-            return res.status(401).json({ success: false, error: 'No user with this email exists' });
+            return res.status(401).json({ success: false, error: 'Invalid email or password' });
         const ok = await bcryptjs_1.default.compare(password, u.password);
         if (!ok)
-            return res.status(401).json({ success: false, error: 'Invalid password' });
+            return res.status(401).json({ success: false, error: 'Invalid email or password' });
         const user = { id: u.id, name: u.name, email: u.email, role: u.role };
         return res.json({ success: true, data: { user, token: sign(user) } });
     }
@@ -147,30 +147,21 @@ router.get('/verify-email', async (req, res) => {
         }
         if (!token)
             return res.status(400).json({ success: false, error: 'Token is required' });
-        console.log(`[VERIFY] Attempting verification with token: length=${token.length}, prefix=${token.substring(0, 10)}`);
+        console.log(`[VERIFY] Attempting verification with token length=${token.length}`);
         const db = getDb();
         const rows = await db.query('SELECT id, email, email_verification_expires_at, email_verified_at, email_verification_token FROM users WHERE email_verification_token=? LIMIT 1', [token]);
         if (!rows[0] || rows.length === 0) {
-            console.log(`[VERIFY] Token not found - may have been used already. Token length: ${token.length}, prefix: ${token.substring(0, 10)}`);
-            console.log(`[VERIFY] Token not found in database. Token length: ${token.length}, prefix: ${token.substring(0, 10)}`);
+            console.log(`[VERIFY] Token not found - may have been used already. Token length: ${token.length}`);
             const allTokens = await db.query('SELECT id, email, email_verification_token, LENGTH(email_verification_token) as token_len FROM users WHERE email_verification_token IS NOT NULL LIMIT 5');
             console.warn('Email verification failed: Invalid token', {
                 tokenLength: token.length,
-                tokenPrefix: token.substring(0, 10),
-                tokenSuffix: token.substring(token.length - 10),
-                tokensInDb: allTokens.length,
-                sampleTokens: allTokens.map((t) => ({
-                    id: t.id,
-                    email: t.email,
-                    tokenLen: t.token_len,
-                    tokenPrefix: t.email_verification_token?.substring(0, 10)
-                }))
+                tokensInDb: allTokens.length
             });
             const allUsersWithTokens = await db.query('SELECT id, email, email_verification_token, email_verification_expires_at FROM users WHERE email_verification_token IS NOT NULL');
             for (const user of allUsersWithTokens) {
                 const dbToken = user.email_verification_token;
                 if (dbToken && (dbToken.includes(token.substring(0, 20)) || token.includes(dbToken.substring(0, 20)))) {
-                    console.warn(`[VERIFY] Possible token mismatch for user ${user.id} (${user.email}). DB token prefix: ${dbToken.substring(0, 10)}, provided token prefix: ${token.substring(0, 10)}`);
+                    console.warn(`[VERIFY] Possible token mismatch for user ${user.id}`);
                 }
             }
             const frontendUrl = process.env.FRONTEND_URL || process.env.EMAIL_VERIFY_REDIRECT || 'http://localhost:3000';
@@ -240,10 +231,7 @@ router.post('/resend-verification', async (req, res) => {
             });
         }
         const token = crypto_1.default.randomBytes(32).toString('hex');
-        console.log(`[RESEND] Generated token for user ${u.id} (${email}): length=${token.length}, prefix=${token.substring(0, 10)}`);
-        if (u.email_verification_token) {
-            console.log(`[RESEND] Replacing old token for user ${u.id}. Old token prefix: ${u.email_verification_token.substring(0, 10)}`);
-        }
+        console.log(`[RESEND] Generated new verification token for user ${u.id} (${email})`);
         const expires = new Date(Date.now() + 30 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
         await db.query('UPDATE users SET email_verification_token=?, email_verification_expires_at=? WHERE id=?', [token, expires, u.id]);
         const verifyToken = await db.query('SELECT email_verification_token, LENGTH(email_verification_token) as token_len FROM users WHERE id=? LIMIT 1', [u.id]);
@@ -252,7 +240,7 @@ router.post('/resend-verification', async (req, res) => {
             return res.status(500).json({ success: false, error: 'Failed to generate verification token. Please try again.' });
         }
         if (verifyToken[0].email_verification_token !== token) {
-            console.error(`[RESEND] Token mismatch for user ${u.id}. Expected: ${token.substring(0, 10)}..., Got: ${verifyToken[0].email_verification_token?.substring(0, 10)}...`);
+            console.error(`[RESEND] Token mismatch for user ${u.id} after save`);
             return res.status(500).json({ success: false, error: 'Token verification failed. Please try again.' });
         }
         console.log(`[RESEND] Token saved successfully for user ${u.id}. Token length in DB: ${verifyToken[0].token_len}`);

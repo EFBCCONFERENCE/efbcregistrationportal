@@ -5,6 +5,8 @@ export declare class RegistrationController {
     constructor(db: DatabaseService);
     private getAuth;
     getRegistrations(req: Request, res: Response): Promise<void>;
+    getMyRegistrations(req: Request, res: Response): Promise<void>;
+    getActivitySeatSummaryForEvent(req: Request, res: Response): Promise<void>;
     getRegistrationById(req: Request, res: Response): Promise<void>;
     createRegistration(req: Request, res: Response): Promise<void>;
     updateRegistration(req: Request, res: Response): Promise<void>;

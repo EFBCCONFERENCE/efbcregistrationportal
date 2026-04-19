@@ -170,3 +170,13 @@ export function pickActivePricingTier(tiersInput: any[], nowMs: number): any | n
 
   return null;
 }
+
+/** Same as backend: `default_price` if set, else minimum listed tier price. */
+export function fallbackRegistrationBasePrice(eventRow: any, tiersInput: any[]): number {
+  const dp = Number(eventRow?.default_price ?? eventRow?.defaultPrice ?? 0);
+  if (dp > 0) return dp;
+  const nums = parsePricingTierArray(tiersInput)
+    .map((t: any) => Number(t.price))
+    .filter((n: number) => typeof n === 'number' && !isNaN(n));
+  return nums.length > 0 ? Math.min(...nums) : 0;
+}

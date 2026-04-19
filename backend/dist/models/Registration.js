@@ -168,6 +168,18 @@ class Registration {
         this.pendingPaymentAmount = data.pendingPaymentAmount ?? data.pending_payment_amount ?? undefined;
         this.pendingPaymentReason = data.pendingPaymentReason ?? data.pending_payment_reason ?? undefined;
         this.pendingPaymentCreatedAt = data.pendingPaymentCreatedAt ?? data.pending_payment_created_at ?? undefined;
+        if (this.paymentMethod === 'Comp') {
+            this.totalPrice = 0;
+            this.paid = true;
+            this.paidAt = this.paidAt || new Date().toISOString();
+            this.squarePaymentId = undefined;
+            this.spousePaymentId = undefined;
+            this.kidsPaymentId = undefined;
+            this.pendingPaymentAmount = 0;
+            this.pendingPaymentReason = undefined;
+            this.pendingPaymentCreatedAt = undefined;
+        }
+        this.updateNotes = data.updateNotes ?? data.update_notes ?? undefined;
     }
     toJSON() {
         const base = {
@@ -282,6 +294,8 @@ class Registration {
             base.pendingPaymentReason = this.pendingPaymentReason;
         if (this.pendingPaymentCreatedAt)
             base.pendingPaymentCreatedAt = this.pendingPaymentCreatedAt;
+        if (this.updateNotes)
+            base.updateNotes = this.updateNotes;
         return base;
     }
     nullIfUndefined(value) {
@@ -495,6 +509,7 @@ class Registration {
             pendingPaymentAmount: row.pending_payment_amount ?? undefined,
             pendingPaymentReason: row.pending_payment_reason ?? undefined,
             pendingPaymentCreatedAt: row.pending_payment_created_at ?? undefined,
+            updateNotes: row.update_notes ?? undefined,
             name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
             category: row.wednesday_activity || 'Networking',
         });

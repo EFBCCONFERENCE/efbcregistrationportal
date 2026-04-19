@@ -6,6 +6,7 @@ import {
   getCurrentEasternTimeMs,
   getEasternTimeEndOfDay,
   pickActivePricingTier,
+  fallbackRegistrationBasePrice,
 } from '../utils/pricingTierUtils';
 import '../styles/RegistrationModal.css';
 
@@ -86,19 +87,35 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
   const spouseTiers = useMemo(() => event.spousePricing || [], [event.spousePricing]);
   const breakfastEnd = event.breakfastEndDate;
 
+  const paymentLineAmounts = useMemo(() => {
+    const now = getCurrentEasternTimeMs();
+    const reg = pickActivePricingTier(regTiers, now);
+    const spouse = pickActivePricingTier(spouseTiers, now);
+    return {
+      conference:
+        typeof reg?.price === 'number'
+          ? reg.price
+          : fallbackRegistrationBasePrice(event, regTiers) || 675,
+      spouse: typeof spouse?.price === 'number' ? spouse.price : 0,
+    };
+  }, [event, regTiers, spouseTiers]);
+
   // Calculate total price based on selections (Eastern Time; same tier rules as backend)
   useEffect(() => {
     const now = getCurrentEasternTimeMs();
     const regActive = pickActivePricingTier(regTiers, now);
     const spouseActive = pickActivePricingTier(spouseTiers, now);
-    let total = typeof regActive?.price === 'number' ? regActive.price : 675;
+    let total =
+      typeof regActive?.price === 'number'
+        ? regActive.price
+        : fallbackRegistrationBasePrice(event, regTiers) || 675;
     if (spouseDinnerSelected) total += typeof spouseActive?.price === 'number' ? spouseActive.price : 0;
     if (spouseBreakfastSelected && typeof event.breakfastPrice === 'number') {
       const endOk = breakfastEnd ? now <= getEasternTimeEndOfDay(String(breakfastEnd)) : true;
       if (endOk) total += event.breakfastPrice;
     }
     setFormData(prev => ({ ...prev, totalPrice: total }));
-  }, [spouseDinnerSelected, spouseBreakfastSelected, regTiers, spouseTiers, event.breakfastPrice, breakfastEnd]);
+  }, [spouseDinnerSelected, spouseBreakfastSelected, regTiers, spouseTiers, event, breakfastEnd]);
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -753,12 +770,12 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
             <div className="payment-summary">
               <div className="payment-item">
                 <span>Conference Registration:</span>
-                <span>${(event.registrationPricing && event.registrationPricing.length ? (function(){ const now=Date.now(); const tiers=(event.registrationPricing||[]).map((t:any)=>({ ...t, s:t.startDate? new Date(t.startDate).getTime():-Infinity, e:t.endDate? new Date(t.endDate).getTime():Infinity })).sort((a:any,b:any)=>a.s-b.s); const active=tiers.find((t:any)=> now>=t.s && now<=t.e) || (now < tiers[0].s ? tiers[0] : (now > tiers[tiers.length-1].e ? tiers[tiers.length-1] : (tiers.find((t:any)=> now < t.s) || tiers[tiers.length-1]))); return (active?.price ?? 675).toFixed(2); })() : '675.00')}</span>
+                <span>${paymentLineAmounts.conference.toFixed(2)}</span>
               </div>
               {formData.spouseDinnerTicket && (
                 <div className="payment-item">
                   <span>Spouse Dinner Ticket:</span>
-                  <span>${(function(){ const now=Date.now(); const tiers=(event.spousePricing||[]).map((t:any)=>({ ...t, s:t.startDate? new Date(t.startDate).getTime():-Infinity, e:t.endDate? new Date(t.endDate).getTime():Infinity })).sort((a:any,b:any)=>a.s-b.s); const active=tiers.find((t:any)=> now>=t.s && now<=t.e) || (now < tiers[0].s ? tiers[0] : (now > tiers[tiers.length-1].e ? tiers[tiers.length-1] : (tiers.find((t:any)=> now < t.s) || tiers[tiers.length-1]))); return (active?.price ?? 0).toFixed(2); })()}</span>
+                  <span>${paymentLineAmounts.spouse.toFixed(2)}</span>
                 </div>
               )}
               {(formData as any).spouseBreakfast && typeof event.breakfastPrice === 'number' && (
@@ -807,7 +824,10 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
                           const now = getCurrentEasternTimeMs();
                           const regActive = pickActivePricingTier(regTiers, now);
                           const spouseActive = pickActivePricingTier(spouseTiers, now);
-                          let total = typeof regActive?.price === 'number' ? regActive.price : 675;
+                          let total =
+                            typeof regActive?.price === 'number'
+                              ? regActive.price
+                              : fallbackRegistrationBasePrice(event, regTiers) || 675;
                           if (spouseDinnerSelected) total += typeof spouseActive?.price === 'number' ? spouseActive.price : 0;
                           if (spouseBreakfastSelected && typeof event.breakfastPrice === 'number') {
                             const endOk = breakfastEnd ? now <= getEasternTimeEndOfDay(String(breakfastEnd)) : true;

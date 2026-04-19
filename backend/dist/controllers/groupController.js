@@ -18,14 +18,16 @@ class GroupController {
             let groups;
             let total;
             if (search) {
-                const searchCondition = `name LIKE '%${search}%'`;
+                const searchCondition = `(name LIKE ?)`;
+                const searchValue = `%${search}%`;
+                const searchParams = [searchValue];
                 let whereClause = searchCondition;
                 if (Object.keys(conditions).length > 0) {
                     const conditionClause = Object.keys(conditions).map(key => `${key} = ?`).join(' AND ');
                     whereClause = `${conditionClause} AND ${searchCondition}`;
                 }
-                groups = await this.db.query(`SELECT * FROM \`activity_groups\` WHERE ${whereClause} LIMIT ? OFFSET ?`, [...Object.values(conditions), Number(limit), offset]);
-                total = await this.db.query(`SELECT COUNT(*) as count FROM \`activity_groups\` WHERE ${whereClause}`, Object.values(conditions));
+                groups = await this.db.query(`SELECT * FROM \`activity_groups\` WHERE ${whereClause} LIMIT ? OFFSET ?`, [...Object.values(conditions), ...searchParams, Number(limit), offset]);
+                total = await this.db.query(`SELECT COUNT(*) as count FROM \`activity_groups\` WHERE ${whereClause}`, [...Object.values(conditions), ...searchParams]);
             }
             else {
                 groups = await this.db.findAll('activity_groups', conditions, Number(limit), offset);
@@ -137,8 +139,17 @@ class GroupController {
                 }
             }
             const oldMemberIds = oldGroup.members || [];
-            const group = new Group_1.Group({ ...existingGroup, ...updateData });
-            group.updatedAt = new Date().toISOString();
+            const base = oldGroup.toJSON();
+            const group = new Group_1.Group({
+                ...base,
+                ...(updateData.eventId !== undefined ? { eventId: updateData.eventId } : {}),
+                ...(updateData.category !== undefined ? { category: updateData.category } : {}),
+                ...(updateData.name !== undefined && updateData.name !== null
+                    ? { name: String(updateData.name).trim() }
+                    : {}),
+                ...(updateData.members !== undefined ? { members: updateData.members } : {}),
+                updatedAt: new Date().toISOString(),
+            });
             const newMemberIds = group.members || [];
             await this.db.update('activity_groups', Number(id), group.toDatabase());
             const removedMembers = oldMemberIds.filter((mid) => !newMemberIds.includes(mid));

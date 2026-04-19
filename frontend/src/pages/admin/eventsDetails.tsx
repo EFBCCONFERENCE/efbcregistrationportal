@@ -5,56 +5,19 @@ import { formatDateShort } from '../../utils/dateUtils';
 import apiClient from '../../services/apiClient';
 import { Modal } from '../../components/Modal';
 import * as XLSX from 'xlsx';
+import { pickActivePricingTier } from '../../utils/pricingTierUtils';
 
 type PricingTier = { label?: string; price?: number; startDate?: string; endDate?: string };
 
-const getEasternYmd = (dateValue?: any): string => {
-  if (!dateValue) return '';
-  const d = new Date(dateValue);
-  if (isNaN(d.getTime())) return '';
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(d);
-  const y = parts.find(p => p.type === 'year')?.value || '';
-  const m = parts.find(p => p.type === 'month')?.value || '';
-  const day = parts.find(p => p.type === 'day')?.value || '';
-  return y && m && day ? `${y}-${m}-${day}` : '';
-};
-
-const normalizeTierDate = (d?: string): string | null => {
-  if (!d) return null;
-  // Accept YYYY-MM-DD or ISO strings; keep just the date part for comparisons
-  const s = String(d).trim();
-  return s.length >= 10 ? s.slice(0, 10) : s;
-};
-
+/** Tier label active at `dateValue` (UTC instant), aligned with registration API tier math. */
 const inferTierLabelFromDate = (tiersRaw: PricingTier[] | undefined, dateValue?: any): string => {
   const tiers = Array.isArray(tiersRaw) ? tiersRaw : [];
   if (tiers.length === 0) return 'N/A';
-
-  const ymd = getEasternYmd(dateValue);
-  if (!ymd) return 'N/A';
-
-  const mapped = tiers
-    .map(t => ({
-      label: t.label || 'N/A',
-      s: normalizeTierDate(t.startDate) || '0000-01-01',
-      e: normalizeTierDate(t.endDate) || '9999-12-31',
-    }))
-    .sort((a, b) => a.s.localeCompare(b.s));
-
-  const hit = mapped.find(t => ymd >= t.s && ymd <= t.e);
-  if (hit) return hit.label;
-
-  // If outside all ranges, clamp to nearest end.
-  const first = mapped[0];
-  const last = mapped[mapped.length - 1];
-  if (ymd < first.s) return first.label;
-  if (ymd > last.e) return last.label;
-  return 'N/A';
+  const ms = dateValue ? new Date(dateValue).getTime() : NaN;
+  if (!Number.isFinite(ms)) return 'N/A';
+  const picked = pickActivePricingTier(tiers as any[], ms);
+  const label = (picked as any)?.label ?? (picked as any)?.name;
+  return typeof label === 'string' && label.trim() ? label : 'N/A';
 };
 
 interface EventDetailsPageProps {

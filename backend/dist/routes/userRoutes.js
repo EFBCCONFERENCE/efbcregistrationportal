@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const userController_1 = require("../controllers/userController");
+const auth_1 = require("../middleware/auth");
 const router = (0, express_1.Router)();
 let userController;
 const initController = async () => {
@@ -30,25 +31,25 @@ router.post('/login', async (req, res) => {
 router.post('/register', async (req, res) => {
     await req.userController.register(req, res);
 });
-router.get('/', async (req, res) => {
+router.get('/', auth_1.requireAdmin, async (req, res) => {
     await req.userController.getUsers(req, res);
 });
-router.get('/:id', async (req, res) => {
+router.get('/:id', auth_1.requireAdmin, async (req, res) => {
     await req.userController.getUserById(req, res);
 });
-router.post('/', async (req, res) => {
+router.post('/', auth_1.requireAdmin, async (req, res) => {
     await req.userController.createUser(req, res);
 });
-router.post('/admin-create', async (req, res) => {
+router.post('/admin-create', auth_1.requireAdmin, async (req, res) => {
     await req.userController.createUserByAdmin(req, res);
 });
-router.put('/:id', async (req, res) => {
+router.put('/:id', auth_1.requireAdmin, async (req, res) => {
     await req.userController.updateUser(req, res);
 });
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auth_1.requireAdmin, async (req, res) => {
     await req.userController.deleteUser(req, res);
 });
-router.put('/:id/verify', async (req, res) => {
+router.put('/:id/verify', auth_1.requireAdmin, async (req, res) => {
     await req.userController.verifyUser(req, res);
 });
 exports.default = router;

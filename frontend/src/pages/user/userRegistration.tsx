@@ -16,6 +16,7 @@ import '../../styles/RegistrationModal.css';
 import {
   getCurrentEasternTimeMs as getCurrentEasternTime,
   pickActivePricingTier,
+  fallbackRegistrationBasePrice,
 } from '../../utils/pricingTierUtils';
 
 /** Per-tier line amounts; sum aligns with tier-based package total (before discount code). */
@@ -28,7 +29,10 @@ function computePackageLineAmounts(opts: {
 }) {
   const now = getCurrentEasternTime();
   const reg = pickActivePricingTier(opts.registrationPricing, now);
-  const conference = typeof reg?.price === 'number' ? reg.price : 675;
+  const conference =
+    typeof reg?.price === 'number'
+      ? reg.price
+      : fallbackRegistrationBasePrice({}, opts.registrationPricing) || 675;
   let spouse = 0;
   if (opts.spouseSelected) {
     const st = pickActivePricingTier(opts.spousePricing, now);
