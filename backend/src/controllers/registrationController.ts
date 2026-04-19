@@ -6,214 +6,12 @@ import { DatabaseService } from '../services/databaseService';
 import { sendRegistrationConfirmationEmail, sendRegistrationUpdateEmail } from '../services/emailService';
 import jwt from 'jsonwebtoken';
 
-
-
-function getEasternTimeMidnight(dateString: string): number {
-  if (!dateString) return -Infinity;
-  
-  try {
-    // Parse the date string
-    const [year, month, day] = dateString.split('-').map(Number);
-    if (!year || !month || !day || isNaN(year) || isNaN(month) || isNaN(day)) {
-      // Fallback to UTC parsing
-      return new Date(dateString + 'T00:00:00Z').getTime();
-    }
-    
-    let guessUtc = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
-    
-    // Check what Eastern time this UTC time represents
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    });
-    
-    let easternTime = formatter.format(guessUtc);
-    let [easternHour, easternMinute] = easternTime.split(':').map(Number);
-    
-    let iterations = 0;
-    while ((easternHour !== 0 || easternMinute !== 0) && iterations < 10) {
-      // Calculate adjustment needed
-      const hoursToSubtract = easternHour;
-      const minutesToSubtract = easternMinute;
-      const adjustmentMs = (hoursToSubtract * 60 + minutesToSubtract) * 60 * 1000;
-      
-      guessUtc = new Date(guessUtc.getTime() - adjustmentMs);
-      
-      easternTime = formatter.format(guessUtc);
-      [easternHour, easternMinute] = easternTime.split(':').map(Number);
-      iterations++;
-    }
-    
-    // For end dates, we want end of day (23:59:59 Eastern)
-    // But this function is for start dates, so return midnight
-    return guessUtc.getTime();
-  } catch (error) {
-    // Fallback to UTC parsing if Eastern Time conversion fails
-    console.warn(`Failed to parse date ${dateString} as Eastern Time, using UTC:`, error);
-    return new Date(dateString + 'T00:00:00Z').getTime();
-  }
-}
-
-/** Add one calendar day to YYYY-MM-DD using UTC date math (no server local timezone). */
-function addOneCalendarDayYyyyMmDd(ymd: string): string {
-  const [y, m, d] = ymd.split('-').map(Number);
-  if (!y || !m || !d) return ymd;
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() + 1);
-  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
-}
-
-/**
- * Get Eastern Time end of day for a date string
- * Returns the start of the next day (exclusive) to ensure the full end date is included
- * Example: For Dec 11, returns Dec 12 00:00:00 Eastern Time
- * This way, any time on Dec 11 will be < Dec 12 00:00:00, so it's included
- */
-function getEasternTimeEndOfDay(dateString: string): number {
-  if (!dateString) return Infinity;
-  
-  try {
-    const [year, month, day] = dateString.split('-').map(Number);
-    if (!year || !month || !day || isNaN(year) || isNaN(month) || isNaN(day)) {
-      // Fallback: add 1 day and get midnight
-      const fallbackDate = new Date(dateString + 'T00:00:00Z');
-      fallbackDate.setUTCDate(fallbackDate.getUTCDate() + 1);
-      return getEasternTimeMidnight(`${fallbackDate.getUTCFullYear()}-${String(fallbackDate.getUTCMonth() + 1).padStart(2, '0')}-${String(fallbackDate.getUTCDate()).padStart(2, '0')}`);
-    }
-
-    const ymd = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const nextDayStr = addOneCalendarDayYyyyMmDd(ymd);
-    return getEasternTimeMidnight(nextDayStr);
-  } catch (error) {
-    console.warn(`Failed to parse end date ${dateString} as Eastern Time, using UTC:`, error);
-    const fallbackDate = new Date(dateString + 'T00:00:00Z');
-    fallbackDate.setUTCDate(fallbackDate.getUTCDate() + 1);
-    return fallbackDate.getTime();
-  }
-}
-
-function easternYyyyMmDdFromTimestamp(ms: number): string {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-  const parts = formatter.formatToParts(new Date(ms));
-  const y = parts.find(p => p.type === 'year')?.value || '0';
-  const mo = parts.find(p => p.type === 'month')?.value || '01';
-  const d = parts.find(p => p.type === 'day')?.value || '01';
-  return `${y}-${mo}-${d}`;
-}
-
-function parsePricingTierArray(v: any): any[] {
-  if (!v) return [];
-  if (Array.isArray(v)) return v;
-  if (typeof v === 'object') return [v];
-  try {
-    const x = JSON.parse(v);
-    return Array.isArray(x) ? x : x && typeof x === 'object' ? [x] : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Choose active pricing tier for an instant in Eastern Time.
- * 1) Half-open window [start, end).
- * 2) If none match, inclusive calendar match on tier startDate/endDate (America/New_York).
- * Never falls back to "last tier in JSON" (that wrongly selected On-site $199).
- */
-function pickActivePricingTier(tiersInput: any[], nowMs: number): any | null {
-  const list = parsePricingTierArray(tiersInput).filter(Boolean);
-  if (list.length === 0) return null;
-
-  const mapped = list.map(t => ({
-    ...t,
-    s: t.startDate ? getEasternTimeMidnight(String(t.startDate)) : -Infinity,
-    e: t.endDate ? getEasternTimeEndOfDay(String(t.endDate)) : Infinity,
-  }));
-
-  const hit = mapped.find((t: any) => nowMs >= t.s && nowMs < t.e);
-  if (hit) return hit;
-
-  const d = easternYyyyMmDdFromTimestamp(nowMs);
-  const dated = mapped.filter((t: any) => t.startDate && t.endDate);
-  const calHits = dated.filter((t: any) => d >= String(t.startDate) && d <= String(t.endDate));
-  if (calHits.length === 1) return calHits[0];
-  if (calHits.length > 1) {
-    return [...calHits].sort((a: any, b: any) => String(b.startDate).localeCompare(String(a.startDate)))[0];
-  }
-
-  const sortedByStart = [...mapped]
-    .filter((t: any) => t.startDate)
-    .sort((a: any, b: any) => String(a.startDate).localeCompare(String(b.startDate)));
-  if (sortedByStart.length && d < String(sortedByStart[0].startDate)) {
-    return sortedByStart[0];
-  }
-
-  const sortedByEnd = [...mapped]
-    .filter((t: any) => t.endDate)
-    .sort((a: any, b: any) => String(a.endDate).localeCompare(String(b.endDate)));
-  const lastEnd = sortedByEnd[sortedByEnd.length - 1];
-  if (lastEnd && lastEnd.endDate && d > String(lastEnd.endDate)) return lastEnd;
-
-  return null;
-}
-
-function getCurrentEasternTime(): number {
-  const now = new Date();
-  
-  // Get current time components in Eastern Time
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  });
-  
-  const parts = formatter.formatToParts(now);
-  const year = parseInt(parts.find(p => p.type === 'year')?.value || '0');
-  const month = parseInt(parts.find(p => p.type === 'month')?.value || '0') - 1;
-  const day = parseInt(parts.find(p => p.type === 'day')?.value || '0');
-  const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
-  const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
-  const second = parseInt(parts.find(p => p.type === 'second')?.value || '0');
-  
-  // Create a UTC date with these Eastern Time components
-  // This represents "what UTC time would give us this Eastern Time"
-  let guessUtc = new Date(Date.UTC(year, month, day, hour, minute, second));
-  
-  // Verify: check what Eastern time this UTC time actually represents
-  const checkFormatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  });
-  
-  let checkTime = checkFormatter.format(guessUtc);
-  let [checkH, checkM, checkS] = checkTime.split(':').map(Number);
-  
-  // If there's a mismatch, adjust the UTC time
-  // This handles edge cases where the initial guess is off
-  if (checkH !== hour || checkM !== minute || checkS !== second) {
-    const diffH = hour - checkH;
-    const diffM = minute - checkM;
-    const diffS = second - checkS;
-    const adjustmentMs = (diffH * 3600 + diffM * 60 + diffS) * 1000;
-    guessUtc = new Date(guessUtc.getTime() + adjustmentMs);
-  }
-  
-  return guessUtc.getTime();
-}
+import {
+  getEasternTimeEndOfDay,
+  parsePricingTierArray,
+  pickActivePricingTier,
+  fallbackRegistrationBasePrice,
+} from '../utils/pricingTierUtils';
 
 /** Whether an activity_groups.category matches the registration's wednesday_activity (tab / roster labels). */
 function groupCategoryMatchesWednesdayActivity(groupCategory: string, wednesdayActivity: string): boolean {
@@ -524,7 +322,7 @@ export class RegistrationController {
           const breakfastPrice = Number(ev.breakfast_price ?? 0);
           // Use Eastern Time for breakfast end date
           const bEnd = ev.breakfast_end_date ? getEasternTimeEndOfDay(ev.breakfast_end_date) : Infinity;
-          const now = getCurrentEasternTime();
+          const now = Date.now();
           const base = pickActivePricingTier(regTiers, now);
           const spouse = registration.spouseDinnerTicket ? pickActivePricingTier(spouseTiers, now) : null;
           
@@ -536,7 +334,7 @@ export class RegistrationController {
             (registration as any).spouseAddedAt = (registration as any).spouseAddedAt || registration.createdAt;
           }
           let total = 0;
-          if (base && typeof base.price==='number') total += base.price; else total += Number(ev.default_price || 0);
+          if (base && typeof base.price==='number') total += base.price; else total += fallbackRegistrationBasePrice(ev, regTiers);
           if (spouse && typeof spouse.price==='number') total += spouse.price;
           if ((registration as any).spouseBreakfast && now <= bEnd) total += (isNaN(breakfastPrice)?0:breakfastPrice);
           
@@ -972,7 +770,7 @@ export class RegistrationController {
             if (typeof v === 'object') return [v];
             try { return JSON.parse(v); } catch { return []; }
           };
-          const now = getCurrentEasternTime();
+          const now = Date.now();
 
           const nowDb = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
@@ -1043,7 +841,7 @@ export class RegistrationController {
             };
             const spouseTiers: any[] = parseJson(ev.spouse_pricing);
             const kidsTiers: any[] = parseJson(ev.kids_pricing);
-            const now = getCurrentEasternTime();
+            const now = Date.now();
 
             // Spouse newly added
             const newSpouseTicket = (updateData as any).spouseDinnerTicket || false;
