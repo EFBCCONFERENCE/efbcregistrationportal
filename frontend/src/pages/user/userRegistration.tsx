@@ -201,18 +201,14 @@ function getCurrentKidsTierOptions(event: Event | null | undefined, dependentTyp
     s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
     e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
   }));
-  const ageNum = asNumberOrUndefined(age);
+  void age;
   return tiers
     .filter((t: any) => now >= t.s && now < t.e)
     .filter((t: any) => {
       const appliesTo = (t.appliesTo || 'child') as 'child' | 'family' | 'both';
       if (appliesTo !== 'both' && appliesTo !== dependentType) return false;
-      if (dependentType !== 'child') return true;
-      if (ageNum === undefined) return true;
-      const minAge = asNumberOrUndefined(t.minAge);
-      const maxAge = asNumberOrUndefined(t.maxAge);
-      if (minAge !== undefined && ageNum < minAge) return false;
-      if (maxAge !== undefined && ageNum > maxAge) return false;
+      // UX rule: show all currently active options by date (and type),
+      // even when age bands overlap; attendee/admin chooses manually.
       return true;
     })
     .sort((a: any, b: any) => (a.s - b.s) || String(a.label || '').localeCompare(String(b.label || '')));
