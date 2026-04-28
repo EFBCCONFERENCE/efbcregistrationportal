@@ -201,17 +201,36 @@ function getCurrentKidsTierOptions(event: Event | null | undefined, dependentTyp
     s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
     e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
   }));
-  void age;
+  const ageNum = asNumberOrUndefined(age);
   return tiers
     .filter((t: any) => now >= t.s && now < t.e)
     .filter((t: any) => {
       const appliesTo = (t.appliesTo || 'child') as 'child' | 'family' | 'both';
       if (appliesTo !== 'both' && appliesTo !== dependentType) return false;
-      // UX rule: show all currently active options by date (and type),
-      // even when age bands overlap; attendee/admin chooses manually.
+      if (dependentType !== 'child') return true;
+      if (ageNum === undefined) return true;
+      const minAge = asNumberOrUndefined(t.minAge);
+      const maxAge = asNumberOrUndefined(t.maxAge);
+      if (minAge !== undefined && ageNum < minAge) return false;
+      if (maxAge !== undefined && ageNum > maxAge) return false;
       return true;
     })
     .sort((a: any, b: any) => (a.s - b.s) || String(a.label || '').localeCompare(String(b.label || '')));
+}
+
+function withAutoDetectedKidPricing(event: Event | null | undefined, kid: any): any {
+  const dependentType: DependentType = kid?.dependentType === 'family' ? 'family' : 'child';
+  const options = getCurrentKidsTierOptions(event, dependentType, Number(kid?.age));
+  const selectedLabel = String(kid?.pricingTierLabel || '').trim();
+  const selected = selectedLabel
+    ? options.find((o: any) => String(o.label || '') === selectedLabel)
+    : (options[0] || null);
+  const priceNum = Number(selected?.price);
+  return {
+    ...kid,
+    pricingTierLabel: selected ? String(selected.label || '') : '',
+    price: Number.isFinite(priceNum) ? priceNum : 0,
+  };
 }
 
 function getKidUnitPrice(
@@ -860,9 +879,6 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
         const depType: DependentType = (kid as any).dependentType === 'family' ? 'family' : 'child';
         if (depType === 'child' && (kid.age === undefined || kid.age === null || Number(kid.age) < 0)) {
           (newErrors as any)[`kid_${idx}_age`] = 'Valid age is required';
-        }
-        if (!String((kid as any).pricingTierLabel || '').trim()) {
-          (newErrors as any)[`kid_${idx}_pricingTierLabel`] = 'Please choose a pricing option';
         }
       });
     }
@@ -3353,7 +3369,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
           {/* Child/Family Member Section */}
           <div className="form-section">
             <h3 className="section-title">Child &amp; Family Member Registration</h3>
-            <p className="form-help-text">Add child or family member attendees and choose an active pricing option.</p>
+            <p className="form-help-text">Add child or family member attendees. Pricing is auto-detected from active tiers.</p>
             
             {kids.map((kid, idx) => (
               <div key={idx} className="kid-entry" style={{ border: '1px solid #ddd', padding: '1rem', marginBottom: '1rem', borderRadius: '4px' }}>
@@ -3384,13 +3400,14 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                       onChange={(e) => {
                         const updatedKids = [...kids];
                         const newType = e.target.value as DependentType;
-                        updatedKids[idx] = {
+                        const nextKid = {
                           ...updatedKids[idx],
                           dependentType: newType,
                           pricingTierLabel: '',
                           price: undefined,
                           age: newType === 'family' ? 0 : updatedKids[idx].age,
                         };
+                        updatedKids[idx] = withAutoDetectedKidPricing(event, nextKid);
                         handleInputChange('kids', updatedKids);
                       }}
                     >
@@ -3398,6 +3415,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                       <option value="family">Family Member</option>
                     </select>
                   </div>
+                </div>
+                <div className="form-row">
                   <div className="form-group">
                     <label htmlFor={`kid_${idx}_firstName`} className="form-label">
                       First Name <span className="required-asterisk">*</span>
@@ -3478,7 +3497,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                       value={kid.age ?? ''}
                       onChange={(e) => {
                         const updatedKids = [...kids];
-                        updatedKids[idx] = { ...updatedKids[idx], age: parseInt(e.target.value) || 0 };
+                        const nextKid = { ...updatedKids[idx], age: parseInt(e.target.value) || 0 };
+                        updatedKids[idx] = withAutoDetectedKidPricing(event, nextKid);
                         handleInputChange('kids', updatedKids);
                       }}
                       disabled={(kid as any).dependentType === 'family'}
@@ -3488,50 +3508,6 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                     )}
                   </div>
                 </div>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label htmlFor={`kid_${idx}_pricingTierLabel`} className="form-label">
-                      Pricing Option <span className="required-asterisk">*</span>
-                    </label>
-                    <select
-                      id={`kid_${idx}_pricingTierLabel`}
-                      className={`form-control ${(errors as any)[`kid_${idx}_pricingTierLabel`] ? 'error' : ''}`}
-                      value={(kid as any).pricingTierLabel || ''}
-                      onChange={(e) => {
-                        const selectedLabel = e.target.value;
-                        const options = getCurrentKidsTierOptions(
-                          event,
-                          ((kid as any).dependentType === 'family' ? 'family' : 'child'),
-                          Number((kid as any).age),
-                        );
-                        const selected = options.find((o: any) => String(o.label || '') === selectedLabel);
-                        const selectedPrice = Number(selected?.price);
-                        const updatedKids = [...kids];
-                        updatedKids[idx] = {
-                          ...updatedKids[idx],
-                          pricingTierLabel: selectedLabel,
-                          price: Number.isFinite(selectedPrice) ? selectedPrice : 0,
-                        };
-                        handleInputChange('kids', updatedKids);
-                      }}
-                    >
-                      <option value="">Select pricing option</option>
-                      {getCurrentKidsTierOptions(
-                        event,
-                        ((kid as any).dependentType === 'family' ? 'family' : 'child'),
-                        Number((kid as any).age),
-                      ).map((opt: any) => (
-                        <option key={`${opt.label}-${opt.startDate || ''}-${opt.endDate || ''}`} value={opt.label}>
-                          {opt.label} - ${Number(opt.price ?? 0).toFixed(2)}
-                        </option>
-                      ))}
-                    </select>
-                    {(errors as any)[`kid_${idx}_pricingTierLabel`] && (
-                      <div className="error-message">{(errors as any)[`kid_${idx}_pricingTierLabel`]}</div>
-                    )}
-                  </div>
-                </div>
-                
               </div>
             ))}
             
@@ -3547,7 +3523,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                   dependentType: 'child' as DependentType,
                   pricingTierLabel: '',
                 };
-                handleInputChange('kids', [...kids, newKid]);
+                handleInputChange('kids', [...kids, withAutoDetectedKidPricing(event, newKid)]);
               }}
             >
               Add Dependent
@@ -3957,6 +3933,18 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                   
                   // If adding spouse or kids to paid registration, only calculate the new amount
                   let baseTotal: number;
+                  let conferenceBasePrice = 0;
+                  if (event?.registrationPricing && event.registrationPricing.length > 0) {
+                    const now = getCurrentEasternTime();
+                    const regTiers = (event.registrationPricing || []).map((t: any) => ({
+                      ...t,
+                      s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
+                      e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
+                    })).sort((a: any, b: any) => a.s - b.s);
+                    const regActive = regTiers.find((t: any) => now >= t.s && now < t.e) ||
+                      (now < regTiers[0]?.s ? regTiers[0] : (now >= regTiers[regTiers.length - 1]?.e ? regTiers[regTiers.length - 1] : (regTiers.find((t: any) => now < t.s) || regTiers[regTiers.length - 1])));
+                    conferenceBasePrice = Number(regActive?.price ?? 0);
+                  }
                   if (isAddingSpouse && isAddingKids) {
                     // Calculate combined price (spouse + kids) using current tier
                     const now = getCurrentEasternTime();
@@ -4050,7 +4038,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                   {!isAddingSpouse && !isAddingKids && !hasPendingPayment && (
                   <div className="payment-item">
                     <span>Conference Registration:</span>
-                      <span>${finalTotal.toFixed(2)}</span>
+                      <span>${conferenceBasePrice.toFixed(2)}</span>
                   </div>
                   )}
                   {hasPendingPayment && (
@@ -4064,15 +4052,15 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                     <>
                       {(formData.spouseDinnerTicket && !isAddingSpouse && !isAddingKids) || isAddingSpouse || (isAddingSpouse && isAddingKids) ? (
                         <div className="payment-item">
-                          <span>Spouse Dinner Ticket:</span>
+                          <span>Spouse/Guest Dinner Ticket:</span>
                           <span>${(function () { const now = getCurrentEasternTime(); const tiers = (event.spousePricing || []).map((t: any) => ({ ...t, s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity, e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity })).sort((a: any, b: any) => a.s - b.s); const active = tiers.find((t: any) => now >= t.s && now < t.e) || (now < tiers[0]?.s ? tiers[0] : (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1]))); return (active?.price ?? 0).toFixed(2); })()}</span>
                         </div>
                       ) : null}
                       {(kids.length > 0 && !isAddingKids && !isAddingSpouse) || isAddingKids || (isAddingSpouse && isAddingKids) ? (
                         <div className="payment-item">
                           <span>Child &amp; Family Member Registration ({isAddingKids || (isAddingSpouse && isAddingKids)
-                            ? `${kids.length - originalKidsCount} ${(kids.length - originalKidsCount) === 1 ? 'child' : 'children'}`
-                            : `${kids.length} ${kids.length === 1 ? 'child' : 'children'}`}):</span>
+                            ? `${kids.length - originalKidsCount} ${(kids.length - originalKidsCount) === 1 ? 'Dependant' : 'Dependants'}`
+                            : `${kids.length} ${kids.length === 1 ? 'Dependant' : 'Dependants'}`}):</span>
                           <span>${(function () {
                             // if (formData.kidsTotalPrice !== undefined) {
                             //   return formData.kidsTotalPrice.toFixed(2);
