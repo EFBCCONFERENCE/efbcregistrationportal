@@ -4062,8 +4062,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                       {(kids.length > 0 && !isAddingKids && !isAddingSpouse) || isAddingKids || (isAddingSpouse && isAddingKids) ? (
                         <div className="payment-item">
                           <span>Child &amp; Family Member Registration ({isAddingKids || (isAddingSpouse && isAddingKids)
-                            ? `${kids.length - originalKidsCount} ${(kids.length - originalKidsCount) === 1 ? 'Dependant' : 'Dependants'}`
-                            : `${kids.length} ${kids.length === 1 ? 'Dependant' : 'Dependants'}`}):</span>
+                            ? `${kids.length - originalKidsCount} ${(kids.length - originalKidsCount) === 1 ? 'Dependent' : 'Dependents'}`
+                            : `${kids.length} ${kids.length === 1 ? 'Dependent' : 'Dependents'}`}):</span>
                           <span>${(function () {
                             // if (formData.kidsTotalPrice !== undefined) {
                             //   return formData.kidsTotalPrice.toFixed(2);

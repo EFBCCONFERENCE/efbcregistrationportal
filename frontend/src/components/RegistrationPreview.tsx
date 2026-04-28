@@ -78,7 +78,10 @@ export const RegistrationPreview: React.FC<RegistrationPreviewProps> = ({
     if (!notes) return null;
     const lines = notes.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     const compLine = lines.find((line) => /^Comp\.\s*/i.test(line));
-    return compLine || null;
+    if (!compLine) return null;
+    return compLine
+      .replace(/Comp\.\s*Children/gi, 'Comp. Dependent')
+      .replace(/Comp\.\s*Spouse,\s*Dependent/gi, 'Comp. Spouse, Dependent');
   };
 
   const downloadPDF = async () => {
