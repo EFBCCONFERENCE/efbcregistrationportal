@@ -935,7 +935,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
         {/* Children Pricing Tiers */}
         <div className="card" style={{ marginBottom: '20px' }}>
           <h2 style={{ marginTop: '0', marginBottom: '20px', borderBottom: '2px solid #e0e0e0', paddingBottom: '10px' }}>
-            Child/Children Pricing Tiers
+            Child & Family Member Pricing Tiers
           </h2>
           {event.kidsPricing && Array.isArray(event.kidsPricing) && event.kidsPricing.length > 0 ? (
             <div className="table-wrapper">

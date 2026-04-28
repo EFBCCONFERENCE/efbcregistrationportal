@@ -5,6 +5,16 @@ import { Modal } from '../../components/Modal';
 import apiClient from '../../services/apiClient';
 import '../../styles/EventFormModal.css';
 
+type KidsPricingTier = {
+  label: string;
+  price?: number;
+  startDate?: string;
+  endDate?: string;
+  appliesTo?: 'child' | 'family' | 'both';
+  minAge?: number;
+  maxAge?: number;
+};
+
 interface AdminEventFormProps {
   event?: Event | null;
   onCancel: () => void;
@@ -36,10 +46,10 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
     { label: 'Dinner Ticket', price: undefined },
     { label: 'On-Site Dinner Ticket', price: undefined },
   ]);
-  const [kidsPricing, setKidsPricing] = useState<Array<{ label: string; price?: number; startDate?: string; endDate?: string }>>([
-    { label: 'Early Bird Child/Children Registration', price: undefined },
-    { label: 'Child/Children Registration', price: undefined },
-    { label: 'On-Site Child/Children Registration', price: undefined },
+  const [kidsPricing, setKidsPricing] = useState<KidsPricingTier[]>([
+    { label: 'Child Dinner Ticket (Ages 0-2)', price: undefined, appliesTo: 'child', minAge: 0, maxAge: 2 },
+    { label: 'Child Dinner Ticket (Ages 3-9)', price: undefined, appliesTo: 'child', minAge: 3, maxAge: 9 },
+    { label: 'Family Member Dinner Ticket', price: undefined, appliesTo: 'family' },
   ]);
   // const [childLunchPrice, setChildLunchPrice] = useState<number | undefined>(undefined);
   const [discountCodes, setDiscountCodes] = useState<DiscountCode[]>([]);
@@ -75,7 +85,7 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
     setActivities(normalizeActivities(event.activities));
     setRegistrationPricing(event.registrationPricing || registrationPricing);
     setSpousePricing(event.spousePricing && event.spousePricing.length ? event.spousePricing : spousePricing);
-    setKidsPricing(event.kidsPricing && event.kidsPricing.length ? event.kidsPricing : kidsPricing);
+    setKidsPricing(event.kidsPricing && event.kidsPricing.length ? (event.kidsPricing as KidsPricingTier[]) : kidsPricing);
     // setChildLunchPrice(event.childLunchPrice);
     
     // Load discount codes for this event
@@ -518,7 +528,7 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
             </div>
 
             <div className="form-group">
-              <label className="form-label">Child/Children Registration Pricing Tiers</label>
+              <label className="form-label">Child &amp; Family Member Pricing Tiers</label>
               <div className="pricing-tiers">
                 {kidsPricing.map((tier, idx) => (
                   <div key={idx} className="tier-row">
@@ -557,6 +567,38 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
                       onChange={(e)=>{ const v=[...kidsPricing]; v[idx]={...v[idx], endDate:e.target.value}; setKidsPricing(v); }}
                       disabled={isSubmitting}
                     />
+                    <select
+                      className="form-control"
+                      aria-label="Tier Applies To"
+                      value={tier.appliesTo || 'child'}
+                      onChange={(e)=>{ const v=[...kidsPricing]; v[idx]={...v[idx], appliesTo: e.target.value as KidsPricingTier['appliesTo']}; setKidsPricing(v); }}
+                      disabled={isSubmitting}
+                      style={{ minWidth: '140px' }}
+                    >
+                      <option value="child">Child</option>
+                      <option value="family">Family Member</option>
+                      <option value="both">Both</option>
+                    </select>
+                    <input
+                      className="form-control tier-price"
+                      type="number"
+                      placeholder="Min Age"
+                      aria-label="Minimum Age"
+                      min={0}
+                      value={tier.minAge ?? ''}
+                      onChange={(e)=>{ const raw=e.target.value; const v=[...kidsPricing]; v[idx]={...v[idx], minAge: raw === '' ? undefined : Number(raw)}; setKidsPricing(v); }}
+                      disabled={isSubmitting || tier.appliesTo === 'family'}
+                    />
+                    <input
+                      className="form-control tier-price"
+                      type="number"
+                      placeholder="Max Age"
+                      aria-label="Maximum Age"
+                      min={0}
+                      value={tier.maxAge ?? ''}
+                      onChange={(e)=>{ const raw=e.target.value; const v=[...kidsPricing]; v[idx]={...v[idx], maxAge: raw === '' ? undefined : Number(raw)}; setKidsPricing(v); }}
+                      disabled={isSubmitting || tier.appliesTo === 'family'}
+                    />
                     <button
                       type="button"
                       className="btn btn-danger btn-sm"
@@ -568,8 +610,11 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
                     </button>
                   </div>
                 ))}
-                <button type="button" className="btn btn-secondary btn-sm" onClick={()=>setKidsPricing([...kidsPricing,{label:'',price:undefined}])} disabled={isSubmitting}>Add Tier</button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={()=>setKidsPricing([...kidsPricing,{label:'',price:undefined, appliesTo:'child'}])} disabled={isSubmitting}>Add Tier</button>
               </div>
+              <small className="form-hint" style={{ display: 'block', marginTop: '0.4rem' }}>
+                Define age rules for child tiers. Family Member tiers can leave age blank.
+              </small>
             </div>
             
             {/* <div className="form-group">

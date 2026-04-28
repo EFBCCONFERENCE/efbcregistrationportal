@@ -177,6 +177,77 @@ function registrationPackageTotalOrDerived(
   return getActiveRegistrationPriceFromEvent(event);
 }
 
+type DependentType = 'child' | 'family';
+type KidTier = {
+  label: string;
+  price?: number;
+  startDate?: string;
+  endDate?: string;
+  appliesTo?: 'child' | 'family' | 'both';
+  minAge?: number;
+  maxAge?: number;
+};
+
+function asNumberOrUndefined(v: any): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function getCurrentKidsTierOptions(event: Event | null | undefined, dependentType: DependentType, age?: number): KidTier[] {
+  if (!event) return [];
+  const now = getCurrentEasternTime();
+  const tiers = (event.kidsPricing || []).map((t: any) => ({
+    ...t,
+    s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
+    e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
+  }));
+  const ageNum = asNumberOrUndefined(age);
+  return tiers
+    .filter((t: any) => now >= t.s && now < t.e)
+    .filter((t: any) => {
+      const appliesTo = (t.appliesTo || 'child') as 'child' | 'family' | 'both';
+      if (appliesTo !== 'both' && appliesTo !== dependentType) return false;
+      if (dependentType !== 'child') return true;
+      if (ageNum === undefined) return true;
+      const minAge = asNumberOrUndefined(t.minAge);
+      const maxAge = asNumberOrUndefined(t.maxAge);
+      if (minAge !== undefined && ageNum < minAge) return false;
+      if (maxAge !== undefined && ageNum > maxAge) return false;
+      return true;
+    })
+    .sort((a: any, b: any) => (a.s - b.s) || String(a.label || '').localeCompare(String(b.label || '')));
+}
+
+function getKidUnitPrice(
+  event: Event | null | undefined,
+  kid: any,
+): number {
+  const explicit = Number(kid?.price);
+  if (Number.isFinite(explicit)) return explicit;
+  const dependentType: DependentType = kid?.dependentType === 'family' ? 'family' : 'child';
+  const options = getCurrentKidsTierOptions(event, dependentType, Number(kid?.age));
+  const selectedLabel = String(kid?.pricingTierLabel || '').trim();
+  if (selectedLabel) {
+    const selected = options.find((o: any) => String(o.label || '') === selectedLabel);
+    const p = Number(selected?.price);
+    if (Number.isFinite(p)) return p;
+  }
+  const fallback = Number(options[0]?.price);
+  return Number.isFinite(fallback) ? fallback : 0;
+}
+
+function getKidsTotal(event: Event | null | undefined, kids: any[]): number {
+  if (!Array.isArray(kids) || kids.length === 0) return 0;
+  return kids.reduce((sum, kid) => sum + getKidUnitPrice(event, kid), 0);
+}
+
+function getNewKidsTotal(event: Event | null | undefined, kids: any[], originalKidsCount: number): number {
+  if (!Array.isArray(kids) || kids.length === 0) return 0;
+  const startIdx = Math.max(0, Number(originalKidsCount || 0));
+  if (kids.length <= startIdx) return 0;
+  return kids.slice(startIdx).reduce((sum, kid) => sum + getKidUnitPrice(event, kid), 0);
+}
+
 interface UserRegistrationProps {
   events: Event[];
   registrations: Registration[];
@@ -610,28 +681,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
       // If kids are being added (without spouse), calculate only kids price
       if (isAddingKids && !isAddingSpouse) {
         const originalRegPrice = registrationPackageTotalOrDerived(registration, event);
-        const now = getCurrentEasternTime();
-        const withBounds = (arr: any[] = []) =>
-          arr
-            .map((t: any) => ({
-              ...t,
-              s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-              e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity,
-            }))
-            .sort((a: any, b: any) => a.s - b.s);
-        const pickTier = (tiers: any[]) => {
-          if (!tiers || tiers.length === 0) return null;
-          const active = tiers.find(t => now >= t.s && now < t.e);
-          if (active) return active;
-          if (now < tiers[0].s) return tiers[0];
-          if (now >= tiers[tiers.length - 1].e) return tiers[tiers.length - 1];
-          const upcoming = tiers.find(t => now < t.s);
-          return upcoming || tiers[tiers.length - 1];
-        };
-        const kidsActive = pickTier(withBounds(kidsTiers));
-        const pricePerKid = kidsActive?.price ?? 0;
-        const newKidsCount = kids.length - originalKidsCount;
-        const kidsPrice = pricePerKid * newKidsCount;
+        const kidsPrice = getNewKidsTotal(event, kids as any[], originalKidsCount);
         const total = originalRegPrice + kidsPrice;
         setFormData(prev => ({ ...prev, totalPrice: total }));
         return;
@@ -660,10 +710,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
         };
         const spouseActive = pickTier(withBounds(spouseTiers));
         const spousePrice = spouseActive?.price ?? 0;
-        const kidsActive = pickTier(withBounds(kidsTiers));
-        const pricePerKid = kidsActive?.price ?? 0;
-        const newKidsCount = kids.length - originalKidsCount;
-        const kidsPrice = pricePerKid * newKidsCount;
+        const kidsPrice = getNewKidsTotal(event, kids as any[], originalKidsCount);
         const total = originalRegPrice + spousePrice + kidsPrice;
         setFormData(prev => ({ ...prev, totalPrice: total }));
         return;
@@ -728,15 +775,10 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
     };
     const regActive = pickTier(withBounds(regTiers));
     const spouseActive = pickTier(withBounds(spouseTiers));
-    const kidsActive = pickTier(withBounds(kidsTiers));
     let total = regActive?.price ?? 0;
     if (spouseDinnerSelected) total += spouseActive?.price ?? 0;
-    // Calculate kids price: calculate from tiers (admin override commented out)
     if (kids.length > 0) {
-      // const kidsPrice = formData.kidsTotalPrice !== undefined 
-      //   ? formData.kidsTotalPrice 
-      //   : (kidsActive?.price ?? 0) * kids.length;
-      const kidsPrice = (kidsActive?.price ?? 0) * kids.length;
+      const kidsPrice = getKidsTotal(event, kids as any[]);
       total += kidsPrice;
     }
     // if (childLunchSelected) total += childLunchPrice;
@@ -819,7 +861,13 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
         if (!kid.firstName?.trim()) (newErrors as any)[`kid_${idx}_firstName`] = 'First name is required';
         if (!kid.lastName?.trim()) (newErrors as any)[`kid_${idx}_lastName`] = 'Last name is required';
         if (!kid.badgeName?.trim()) (newErrors as any)[`kid_${idx}_badgeName`] = 'Badge name is required';
-        if (!kid.age || kid.age < 0) (newErrors as any)[`kid_${idx}_age`] = 'Valid age is required';
+        const depType: DependentType = (kid as any).dependentType === 'family' ? 'family' : 'child';
+        if (depType === 'child' && (kid.age === undefined || kid.age === null || Number(kid.age) < 0)) {
+          (newErrors as any)[`kid_${idx}_age`] = 'Valid age is required';
+        }
+        if (!String((kid as any).pricingTierLabel || '').trim()) {
+          (newErrors as any)[`kid_${idx}_pricingTierLabel`] = 'Please choose a pricing option';
+        }
       });
     }
     // if ((formData as any).childLunchTicket) {
@@ -1442,8 +1490,10 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
     // Validate all kids have required fields
     for (let i = 0; i < kids.length; i++) {
       const kid = kids[i];
-      if (!kid.firstName?.trim() || !kid.lastName?.trim() || !kid.badgeName?.trim() || !kid.age) {
-        alert(`Please fill in all required fields for Child ${i + 1} (First Name, Last Name, Badge Name, and Age).`);
+      const depType: DependentType = (kid as any).dependentType === 'family' ? 'family' : 'child';
+      const missingAge = depType === 'child' && (kid.age === undefined || kid.age === null || Number(kid.age) < 0);
+      if (!kid.firstName?.trim() || !kid.lastName?.trim() || !kid.badgeName?.trim() || missingAge || !String((kid as any).pricingTierLabel || '').trim()) {
+        alert(`Please fill in all required fields for Dependent ${i + 1} (Name, badge, age for child, and pricing option).`);
         return;
       }
     }
@@ -1477,19 +1527,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
       const nonce = res.token;
       
       // Calculate kids-only price using Eastern Time to match backend
-      const now = getCurrentEasternTime();
-      const tiers = (event.kidsPricing || []).map((t: any) => ({
-        ...t,
-        s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-        e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-      })).sort((a: any, b: any) => a.s - b.s);
-      // Find active tier
-      const active = tiers.find((t: any) => now >= t.s && now < t.e) ||
-        (now < tiers[0]?.s ? tiers[0] : (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
-      const pricePerKid = active?.price ?? 0;
-      // Only calculate price for NEW children being added
-      const newKidsCount = kids.length - originalKidsCount;
-      let kidsPrice = pricePerKid * newKidsCount;
+      let kidsPrice = getNewKidsTotal(event, kids as any[], originalKidsCount);
       
       // Apply discount if discount code is valid
       if (discountCodeData && typeof discountCodeData.discountValue === 'number') {
@@ -1513,7 +1551,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
           baseAmountCents,
           applyCardFee: true, // Backend will apply 3.5% fee
           currency: 'USD',
-          eventName: `${event?.name || 'EFBC Conference'} - Children Registration (${kids.length} ${kids.length === 1 ? 'child' : 'children'})`,
+          eventName: `${event?.name || 'EFBC Conference'} - Child & Family Member Registration (${kids.length} ${kids.length === 1 ? 'dependent' : 'dependents'})`,
           nonce,
           buyerEmail: formData.email || undefined,
           buyerPhone: formData.mobile || formData.officePhone || undefined,
@@ -1612,18 +1650,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
         // Include discount code if provided
         discountCode: discountCodeInput.trim() || undefined,
         discountAmount: discountCodeData && typeof discountCodeData.discountValue === 'number' ? (() => {
-          const now = getCurrentEasternTime();
-          const tiers = (event.kidsPricing || []).map((t: any) => ({
-            ...t,
-            s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-            e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-          })).sort((a: any, b: any) => a.s - b.s);
-          const active = tiers.find((t: any) => now >= t.s && now < t.e) ||
-            (now < tiers[0]?.s ? tiers[0] : (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
-          const pricePerKid = active?.price ?? 0;
-          // Only calculate price for NEW children being added
-          const newKidsCount = kids.length - originalKidsCount;
-          const kidsPrice = pricePerKid * newKidsCount;
+          const kidsPrice = getNewKidsTotal(event, kids as any[], originalKidsCount);
           let discountAmount = 0;
           if (discountCodeData.discountType === 'percentage') {
             discountAmount = (kidsPrice * discountCodeData.discountValue) / 100;
@@ -1681,8 +1708,10 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
     // Validate all kids have required fields
     for (let i = 0; i < kids.length; i++) {
       const kid = kids[i];
-      if (!kid.firstName?.trim() || !kid.lastName?.trim() || !kid.badgeName?.trim() || !kid.age) {
-        alert(`Please fill in all required fields for Child ${i + 1} (First Name, Last Name, Badge Name, and Age).`);
+      const depType: DependentType = (kid as any).dependentType === 'family' ? 'family' : 'child';
+      const missingAge = depType === 'child' && (kid.age === undefined || kid.age === null || Number(kid.age) < 0);
+      if (!kid.firstName?.trim() || !kid.lastName?.trim() || !kid.badgeName?.trim() || missingAge || !String((kid as any).pricingTierLabel || '').trim()) {
+        alert(`Please fill in all required fields for Dependent ${i + 1} (Name, badge, age for child, and pricing option).`);
         return;
       }
     }
@@ -1729,17 +1758,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
       const spousePrice = spouseActive?.price ?? 0;
       
       // Calculate kids price
-      const kidsTiers = (event.kidsPricing || []).map((t: any) => ({
-        ...t,
-        s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-        e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-      })).sort((a: any, b: any) => a.s - b.s);
-      const kidsActive = kidsTiers.find((t: any) => now >= t.s && now < t.e) ||
-        (now < kidsTiers[0]?.s ? kidsTiers[0] : (now >= kidsTiers[kidsTiers.length - 1]?.e ? kidsTiers[kidsTiers.length - 1] : (kidsTiers.find((t: any) => now < t.s) || kidsTiers[kidsTiers.length - 1])));
-      const pricePerKid = kidsActive?.price ?? 0;
-      // Only calculate price for NEW children being added
-      const newKidsCount = kids.length - originalKidsCount;
-      const kidsPrice = pricePerKid * newKidsCount;
+      const kidsPrice = getNewKidsTotal(event, kids as any[], originalKidsCount);
       
       let combinedPrice = spousePrice + kidsPrice;
       
@@ -1765,7 +1784,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
           baseAmountCents,
           applyCardFee: true, // Backend will apply 3.5% fee
           currency: 'USD',
-          eventName: `${event?.name || 'EFBC Conference'} - Spouse & Children Registration`,
+          eventName: `${event?.name || 'EFBC Conference'} - Spouse & Dependents Registration`,
           nonce,
           buyerEmail: formData.email || undefined,
           buyerPhone: formData.mobile || formData.officePhone || undefined,
@@ -1881,17 +1900,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
           const spouseActive = spouseTiers.find((t: any) => now >= t.s && now < t.e) ||
             (now < spouseTiers[0]?.s ? spouseTiers[0] : (now >= spouseTiers[spouseTiers.length - 1]?.e ? spouseTiers[spouseTiers.length - 1] : (spouseTiers.find((t: any) => now < t.s) || spouseTiers[spouseTiers.length - 1])));
           const spousePrice = spouseActive?.price ?? 0;
-          const kidsTiers = (event.kidsPricing || []).map((t: any) => ({
-            ...t,
-            s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-            e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-          })).sort((a: any, b: any) => a.s - b.s);
-          const kidsActive = kidsTiers.find((t: any) => now >= t.s && now < t.e) ||
-            (now < kidsTiers[0]?.s ? kidsTiers[0] : (now >= kidsTiers[kidsTiers.length - 1]?.e ? kidsTiers[kidsTiers.length - 1] : (kidsTiers.find((t: any) => now < t.s) || kidsTiers[kidsTiers.length - 1])));
-          const pricePerKid = kidsActive?.price ?? 0;
-          // Only calculate price for NEW children being added
-          const newKidsCount = kids.length - originalKidsCount;
-          const kidsPrice = pricePerKid * newKidsCount;
+          const kidsPrice = getNewKidsTotal(event, kids as any[], originalKidsCount);
           const combinedPrice = spousePrice + kidsPrice;
           let discountAmount = 0;
           if (discountCodeData.discountType === 'percentage') {
@@ -2536,10 +2545,10 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
               </div>
               {(event.kidsPricing && event.kidsPricing.length > 0) && (
                 <div className="pricing-section">
-                  <h4 className="pricing-title">Child/Children Registration</h4>
+                  <h4 className="pricing-title">Child &amp; Family Member Registration</h4>
                   {(event.kidsPricing || []).map((t, i) => (
                     <div className="pricing-item" key={i}>
-                      <span className="pricing-label">{t.label || `Child/Children registration ${i + 1}`}:</span>
+                      <span className="pricing-label">{t.label || `Dependent registration ${i + 1}`}:</span>
                       <span className="pricing-amount">${t.price}{(t.startDate || t.endDate) ? ` ${t.startDate ? 'between ' + formatDateShort(t.startDate) : ''}${t.startDate && t.endDate ? ' to ' : ''}${t.endDate ? formatDateShort(t.endDate) : ''}` : ''}</span>
                     </div>
                   ))}
@@ -3345,15 +3354,15 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
               )}
             </div>
 
-          {/* Child/Children Registration Section */}
+          {/* Child/Family Member Section */}
           <div className="form-section">
-            <h3 className="section-title">Child/Children Registration</h3>
-            <p className="form-help-text">Add children who will be attending the conference.</p>
+            <h3 className="section-title">Child &amp; Family Member Registration</h3>
+            <p className="form-help-text">Add child or family member attendees and choose an active pricing option.</p>
             
             {kids.map((kid, idx) => (
               <div key={idx} className="kid-entry" style={{ border: '1px solid #ddd', padding: '1rem', marginBottom: '1rem', borderRadius: '4px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <h4 style={{ margin: 0 }}>Child {idx + 1}</h4>
+                  <h4 style={{ margin: 0 }}>Dependent {idx + 1}</h4>
                   <button
                     type="button"
                     className="btn btn-danger btn-sm"
@@ -3368,6 +3377,31 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                 </div>
                 
                 <div className="form-row">
+                  <div className="form-group">
+                    <label htmlFor={`kid_${idx}_dependentType`} className="form-label">
+                      Type <span className="required-asterisk">*</span>
+                    </label>
+                    <select
+                      id={`kid_${idx}_dependentType`}
+                      className="form-control"
+                      value={(kid as any).dependentType || 'child'}
+                      onChange={(e) => {
+                        const updatedKids = [...kids];
+                        const newType = e.target.value as DependentType;
+                        updatedKids[idx] = {
+                          ...updatedKids[idx],
+                          dependentType: newType,
+                          pricingTierLabel: '',
+                          price: undefined,
+                          age: newType === 'family' ? 0 : updatedKids[idx].age,
+                        };
+                        handleInputChange('kids', updatedKids);
+                      }}
+                    >
+                      <option value="child">Child</option>
+                      <option value="family">Family Member</option>
+                    </select>
+                  </div>
                   <div className="form-group">
                     <label htmlFor={`kid_${idx}_firstName`} className="form-label">
                       First Name <span className="required-asterisk">*</span>
@@ -3437,7 +3471,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                   
                   <div className="form-group">
                     <label htmlFor={`kid_${idx}_age`} className="form-label">
-                      Age <span className="required-asterisk">*</span>
+                      Age {(kid as any).dependentType !== 'family' && <span className="required-asterisk">*</span>}
                     </label>
                     <input
                       id={`kid_${idx}_age`}
@@ -3445,15 +3479,59 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                       min="0"
                       max="17"
                       className={`form-control ${(errors as any)[`kid_${idx}_age`] ? 'error' : ''}`}
-                      value={kid.age || ''}
+                      value={kid.age ?? ''}
                       onChange={(e) => {
                         const updatedKids = [...kids];
                         updatedKids[idx] = { ...updatedKids[idx], age: parseInt(e.target.value) || 0 };
                         handleInputChange('kids', updatedKids);
                       }}
+                      disabled={(kid as any).dependentType === 'family'}
                     />
                     {(errors as any)[`kid_${idx}_age`] && (
                       <div className="error-message">{(errors as any)[`kid_${idx}_age`]}</div>
+                    )}
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label htmlFor={`kid_${idx}_pricingTierLabel`} className="form-label">
+                      Pricing Option <span className="required-asterisk">*</span>
+                    </label>
+                    <select
+                      id={`kid_${idx}_pricingTierLabel`}
+                      className={`form-control ${(errors as any)[`kid_${idx}_pricingTierLabel`] ? 'error' : ''}`}
+                      value={(kid as any).pricingTierLabel || ''}
+                      onChange={(e) => {
+                        const selectedLabel = e.target.value;
+                        const options = getCurrentKidsTierOptions(
+                          event,
+                          ((kid as any).dependentType === 'family' ? 'family' : 'child'),
+                          Number((kid as any).age),
+                        );
+                        const selected = options.find((o: any) => String(o.label || '') === selectedLabel);
+                        const selectedPrice = Number(selected?.price);
+                        const updatedKids = [...kids];
+                        updatedKids[idx] = {
+                          ...updatedKids[idx],
+                          pricingTierLabel: selectedLabel,
+                          price: Number.isFinite(selectedPrice) ? selectedPrice : 0,
+                        };
+                        handleInputChange('kids', updatedKids);
+                      }}
+                    >
+                      <option value="">Select pricing option</option>
+                      {getCurrentKidsTierOptions(
+                        event,
+                        ((kid as any).dependentType === 'family' ? 'family' : 'child'),
+                        Number((kid as any).age),
+                      ).map((opt: any) => (
+                        <option key={`${opt.label}-${opt.startDate || ''}-${opt.endDate || ''}`} value={opt.label}>
+                          {opt.label} - ${Number(opt.price ?? 0).toFixed(2)}
+                        </option>
+                      ))}
+                    </select>
+                    {(errors as any)[`kid_${idx}_pricingTierLabel`] && (
+                      <div className="error-message">{(errors as any)[`kid_${idx}_pricingTierLabel`]}</div>
                     )}
                   </div>
                 </div>
@@ -3470,11 +3548,13 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                   lastName: '',
                   badgeName: '',
                   age: 0,
+                  dependentType: 'child' as DependentType,
+                  pricingTierLabel: '',
                 };
                 handleInputChange('kids', [...kids, newKid]);
               }}
             >
-              Add Child
+              Add Dependent
             </button>
             
             {/* Kids price override commented out - using coupon codes instead */}
@@ -3647,15 +3727,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                           }
                           
                           if (kids.length > 0) {
-                            const kidsTiers = (event?.kidsPricing || []).map((t: any) => ({
-                              ...t,
-                              s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                              e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-                            })).sort((a: any, b: any) => a.s - b.s);
-                            const kidsActive = kidsTiers.find((t: any) => now >= t.s && now < t.e) ||
-                              (now < kidsTiers[0]?.s ? kidsTiers[0] : (now >= kidsTiers[kidsTiers.length - 1]?.e ? kidsTiers[kidsTiers.length - 1] : (kidsTiers.find((t: any) => now < t.s) || kidsTiers[kidsTiers.length - 1])));
-                            const pricePerKid = kidsActive?.price ?? 0;
-                            total += pricePerKid * kids.length;
+                            total += getKidsTotal(event, kids as any[]);
                           }
                           
                           setPriceOverride(total);
@@ -3903,18 +3975,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                       (now < spouseTiers[0]?.s ? spouseTiers[0] : (now >= spouseTiers[spouseTiers.length - 1]?.e ? spouseTiers[spouseTiers.length - 1] : (spouseTiers.find((t: any) => now < t.s) || spouseTiers[spouseTiers.length - 1])));
                     const spousePrice = spouseActive?.price ?? 0;
                     
-                    // Calculate kids price
-                    const kidsTiers = (event.kidsPricing || []).map((t: any) => ({
-                      ...t,
-                      s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                      e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-                    })).sort((a: any, b: any) => a.s - b.s);
-                    const kidsActive = kidsTiers.find((t: any) => now >= t.s && now < t.e) ||
-                      (now < kidsTiers[0]?.s ? kidsTiers[0] : (now >= kidsTiers[kidsTiers.length - 1]?.e ? kidsTiers[kidsTiers.length - 1] : (kidsTiers.find((t: any) => now < t.s) || kidsTiers[kidsTiers.length - 1])));
-                    const pricePerKid = kidsActive?.price ?? 0;
-                    // Only calculate price for NEW children being added
-                    const newKidsCount = kids.length - originalKidsCount;
-                    const kidsPrice = pricePerKid * newKidsCount;
+                    const kidsPrice = getNewKidsTotal(event, kids as any[], originalKidsCount);
                     
                     baseTotal = spousePrice + kidsPrice;
                   } else if (isAddingSpouse) {
@@ -3929,19 +3990,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                       (now < tiers[0]?.s ? tiers[0] : (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
                     baseTotal = active?.price ?? 0;
                   } else if (isAddingKids) {
-                    // Calculate only NEW kids price using current tier (not all kids)
-                    const now = getCurrentEasternTime();
-                    const tiers = (event.kidsPricing || []).map((t: any) => ({
-                      ...t,
-                      s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity,
-                      e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity
-                    })).sort((a: any, b: any) => a.s - b.s);
-                    const active = tiers.find((t: any) => now >= t.s && now < t.e) ||
-                      (now < tiers[0]?.s ? tiers[0] : (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
-                    const pricePerKid = active?.price ?? 0;
-                    // Only calculate price for NEW children being added
-                    const newKidsCount = kids.length - originalKidsCount;
-                    baseTotal = pricePerKid * newKidsCount;
+                    baseTotal = getNewKidsTotal(event, kids as any[], originalKidsCount);
                   } else {
                     // Normal flow: show full registration price (already discounted if discount was applied)
                     baseTotal = Number(formData.totalPrice || 0);
@@ -4025,29 +4074,17 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                       ) : null}
                       {(kids.length > 0 && !isAddingKids && !isAddingSpouse) || isAddingKids || (isAddingSpouse && isAddingKids) ? (
                         <div className="payment-item">
-                          <span>Child/Children Registration ({isAddingKids || (isAddingSpouse && isAddingKids) 
+                          <span>Child &amp; Family Member Registration ({isAddingKids || (isAddingSpouse && isAddingKids)
                             ? `${kids.length - originalKidsCount} ${(kids.length - originalKidsCount) === 1 ? 'child' : 'children'}`
                             : `${kids.length} ${kids.length === 1 ? 'child' : 'children'}`}):</span>
                           <span>${(function () {
                             // if (formData.kidsTotalPrice !== undefined) {
                             //   return formData.kidsTotalPrice.toFixed(2);
                             // }
-                            const now = getCurrentEasternTime();
-                            const tiers = (event.kidsPricing || []).map((t: any) => ({ 
-                              ...t, 
-                              s: t.startDate ? getEasternTimeMidnight(t.startDate) : -Infinity, 
-                              e: t.endDate ? getEasternTimeEndOfDay(t.endDate) : Infinity 
-                            })).sort((a: any, b: any) => a.s - b.s);
-                            const active = tiers.find((t: any) => now >= t.s && now < t.e) || 
-                              (now < tiers[0]?.s ? tiers[0] : 
-                              (now >= tiers[tiers.length - 1]?.e ? tiers[tiers.length - 1] : 
-                              (tiers.find((t: any) => now < t.s) || tiers[tiers.length - 1])));
-                            const pricePerKid = active?.price ?? 0;
-                            // When adding kids, only calculate for new children
-                            const kidsCount = (isAddingKids || (isAddingSpouse && isAddingKids)) 
-                              ? (kids.length - originalKidsCount) 
-                              : kids.length;
-                            return (pricePerKid * kidsCount).toFixed(2);
+                            const kidsTotal = (isAddingKids || (isAddingSpouse && isAddingKids))
+                              ? getNewKidsTotal(event, kids as any[], originalKidsCount)
+                              : getKidsTotal(event, kids as any[]);
+                            return kidsTotal.toFixed(2);
                           })()}</span>
                         </div>
                       ) : null}
@@ -4213,7 +4250,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
               if (!isAdminEdit && isAlreadyPaid && isAddingBoth && paymentMethod === 'Card') {
                 return (
                   <button type="button" className="btn btn-primary btn-save" onClick={handleCombinedPayment} disabled={isSubmitting}>
-                    {isSubmitting ? 'Processing...' : 'Pay for Spouse & Children Registration'}
+                    {isSubmitting ? 'Processing...' : 'Pay for Spouse & Dependents Registration'}
                   </button>
                 );
               }
@@ -4231,7 +4268,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
               if (!isAdminEdit && isAlreadyPaid && isAddingKids && paymentMethod === 'Card' && !isAddingSpouse) {
                 return (
                   <button type="button" className="btn btn-primary btn-save" onClick={handleKidsPayment} disabled={isSubmitting}>
-                    {isSubmitting ? 'Processing...' : `Pay for Children Registration (${kids.length} ${kids.length === 1 ? 'child' : 'children'})`}
+                    {isSubmitting ? 'Processing...' : `Pay for Dependents Registration (${kids.length} ${kids.length === 1 ? 'dependent' : 'dependents'})`}
                   </button>
                 );
               }

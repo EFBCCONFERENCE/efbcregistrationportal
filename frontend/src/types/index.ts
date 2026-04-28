@@ -5,6 +5,8 @@ export interface Kid {
   lastName: string;
   badgeName: string;
   age: number;
+  dependentType?: 'child' | 'family';
+  pricingTierLabel?: string;
   price?: number; // Admin-adjusted price per kid
   lunchTicket?: boolean;
 }
@@ -33,7 +35,15 @@ export interface Event {
   breakfastPrice?: number;
   breakfastEndDate?: string;
   childLunchPrice?: number;
-  kidsPricing?: Array<{ label: string; price: number; startDate?: string; endDate?: string }>;
+  kidsPricing?: Array<{
+    label: string;
+    price: number;
+    startDate?: string;
+    endDate?: string;
+    appliesTo?: 'child' | 'family' | 'both';
+    minAge?: number;
+    maxAge?: number;
+  }>;
 }
 
 export interface DiscountCode {

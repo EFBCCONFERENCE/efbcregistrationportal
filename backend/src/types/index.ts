@@ -5,6 +5,8 @@ export interface Kid {
   lastName: string;
   badgeName: string;
   age: number;
+  dependentType?: 'child' | 'family';
+  pricingTierLabel?: string;
   price?: number; // Admin-adjusted price per kid
   lunchTicket?: boolean;
 }
@@ -35,6 +37,15 @@ export interface Event {
   registrationPricing?: Array<{ label: string; price: number; startDate?: string; endDate?: string }>;
   breakfastPrice?: number;
   breakfastEndDate?: string;
+  kidsPricing?: Array<{
+    label: string;
+    price: number;
+    startDate?: string;
+    endDate?: string;
+    appliesTo?: 'child' | 'family' | 'both';
+    minAge?: number;
+    maxAge?: number;
+  }>;
 }
 
 export interface Registration {
@@ -190,6 +201,15 @@ export interface CreateEventRequest {
   registrationPricing?: Array<{ label: string; price: number; startDate?: string; endDate?: string }>;
   breakfastPrice?: number;
   breakfastEndDate?: string;
+  kidsPricing?: Array<{
+    label: string;
+    price: number;
+    startDate?: string;
+    endDate?: string;
+    appliesTo?: 'child' | 'family' | 'both';
+    minAge?: number;
+    maxAge?: number;
+  }>;
 }
 
 export interface UpdateEventRequest extends Partial<CreateEventRequest> {}

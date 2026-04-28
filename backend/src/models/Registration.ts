@@ -52,7 +52,16 @@ export class Registration {
   public spouseFirstName?: string;
   public spouseLastName?: string;
   public spouseDinnerTicket: boolean;
-  public kids?: Array<{ firstName: string; lastName: string; badgeName: string; age: number; price?: number; lunchTicket?: boolean }>;
+  public kids?: Array<{
+    firstName: string;
+    lastName: string;
+    badgeName: string;
+    age: number;
+    dependentType?: 'child' | 'family';
+    pricingTierLabel?: string;
+    price?: number;
+    lunchTicket?: boolean;
+  }>;
   public kidsTotalPrice?: number;
   public childFirstName?: string;
   public childLastName?: string;

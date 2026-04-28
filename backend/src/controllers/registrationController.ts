@@ -137,6 +137,19 @@ function getCurrentEasternTime(): number {
   return guessUtc.getTime();
 }
 
+function asNum(v: any): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function computeKidsTotalFromRows(kids: any[], fallbackPricePerKid: number): number {
+  if (!Array.isArray(kids) || kids.length === 0) return 0;
+  return kids.reduce((sum, k) => {
+    const explicit = asNum((k as any)?.price);
+    return sum + (explicit !== undefined ? explicit : fallbackPricePerKid);
+  }, 0);
+}
+
 /** Whether an activity_groups.category matches the registration's wednesday_activity (tab / roster labels). */
 function groupCategoryMatchesWednesdayActivity(groupCategory: string, wednesdayActivity: string): boolean {
   const c = String(groupCategory || '').trim().toLowerCase();
@@ -484,7 +497,7 @@ export class RegistrationController {
             // For kids, track when they were first added (on create it's the submission time)
             (registration as any).kidsAddedAt = (registration as any).kidsAddedAt || registration.createdAt;
             const pricePerKid = kidsActive?.price ?? 0;
-            total += pricePerKid * registration.kids.length;
+            total += computeKidsTotalFromRows(registration.kids as any[], pricePerKid);
           }
           
           registration.totalPrice = total || registration.totalPrice || 0;
@@ -1023,18 +1036,18 @@ export class RegistrationController {
               const newKids = (updateData as any).kids || [];
               const newKidsCount = Array.isArray(newKids) ? newKids.length : 0;
               if (newKidsCount > oldKidsCount) {
-                const addedKidsCount = newKidsCount - oldKidsCount;
                 const kidsActive = pick(kidsTiers);
                 const pricePerKid = kidsActive?.price ?? 0;
-                const kidsPrice = pricePerKid * addedKidsCount;
+                const addedKids = Array.isArray(newKids) ? newKids.slice(oldKidsCount) : [];
+                const kidsPrice = computeKidsTotalFromRows(addedKids as any[], pricePerKid);
                 calculatedTotal += kidsPrice;
                 pendingAmount += kidsPrice;
-                reasonParts.push(`${addedKidsCount} children added ($${kidsPrice.toFixed(2)})`);
+                reasonParts.push(`${Array.isArray(addedKids) ? addedKids.length : 0} dependent(s) added ($${kidsPrice.toFixed(2)})`);
               } else if (newKidsCount > 0) {
-                // Children already exist, recalculate price
+                // Dependents already exist, recalculate total for all rows
                 const kidsActive = pick(kidsTiers);
                 const pricePerKid = kidsActive?.price ?? 0;
-                calculatedTotal += pricePerKid * newKidsCount;
+                calculatedTotal += computeKidsTotalFromRows(newKids as any[], pricePerKid);
               }
               
               // Apply discount if exists
