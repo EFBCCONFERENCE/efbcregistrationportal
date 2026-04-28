@@ -223,7 +223,7 @@ function withAutoDetectedKidPricing(event: Event | null | undefined, kid: any): 
   const options = getCurrentKidsTierOptions(event, dependentType, Number(kid?.age));
   const selectedLabel = String(kid?.pricingTierLabel || '').trim();
   const selected = selectedLabel
-    ? options.find((o: any) => String(o.label || '') === selectedLabel)
+    ? (options.find((o: any) => String(o.label || '') === selectedLabel) || options[0] || null)
     : (options[0] || null);
   const priceNum = Number(selected?.price);
   return {
@@ -3488,13 +3488,10 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                     <label htmlFor={`kid_${idx}_age`} className="form-label">
                       Age {(kid as any).dependentType !== 'family' && <span className="required-asterisk">*</span>}
                     </label>
-                    <input
+                    <select
                       id={`kid_${idx}_age`}
-                      type="number"
-                      min="0"
-                      max="17"
                       className={`form-control ${(errors as any)[`kid_${idx}_age`] ? 'error' : ''}`}
-                      value={kid.age ?? ''}
+                      value={kid.age ?? 0}
                       onChange={(e) => {
                         const updatedKids = [...kids];
                         const nextKid = { ...updatedKids[idx], age: parseInt(e.target.value) || 0 };
@@ -3502,7 +3499,13 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                         handleInputChange('kids', updatedKids);
                       }}
                       disabled={(kid as any).dependentType === 'family'}
-                    />
+                    >
+                      {Array.from({ length: 19 }, (_, age) => (
+                        <option key={age} value={age}>
+                          {age}
+                        </option>
+                      ))}
+                    </select>
                     {(errors as any)[`kid_${idx}_age`] && (
                       <div className="error-message">{(errors as any)[`kid_${idx}_age`]}</div>
                     )}
