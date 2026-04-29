@@ -131,6 +131,7 @@ const App: React.FC = () => {
           : (typeof e.activities === 'string' && e.activities.trim().startsWith('[')
               ? JSON.parse(e.activities)
               : []),
+        ribbons: parseArr(e.ribbons),
         location: e.location,
         description: e.description,
         // Normalize pricing fields (handle camelCase/snake_case and stringified JSON)
@@ -238,6 +239,19 @@ useEffect(() => {
           return v === true || v === 1 || v === '1';
         })(),
         wednesdayActivityWaitlistedAt: r.wednesdayActivityWaitlistedAt ?? r.wednesday_activity_waitlisted_at ?? undefined,
+        ribbons: (() => {
+          const raw = r.ribbons;
+          if (Array.isArray(raw)) return raw;
+          if (typeof raw === 'string') {
+            try {
+              const parsed = JSON.parse(raw);
+              return Array.isArray(parsed) ? parsed : [];
+            } catch {
+              return [];
+            }
+          }
+          return [];
+        })(),
         golfHandicap: r.golfHandicap ?? '',
         golfClubPreference: r.golfClubPreference ?? 'Own Clubs',
         clubRentals: r.clubRentals ?? r.club_rentals ?? '',
