@@ -57,6 +57,40 @@ const inferTierLabelFromDate = (tiersRaw: PricingTier[] | undefined, dateValue?:
   return 'N/A';
 };
 
+const parseKidsRows = (kidsRaw: any): any[] => {
+  if (Array.isArray(kidsRaw)) return kidsRaw;
+  if (typeof kidsRaw === 'string') {
+    try {
+      const parsed = JSON.parse(kidsRaw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
+const getRegistrationKidsTierLabels = (event: Event, reg: Registration): string[] => {
+  const kidsRows = parseKidsRows((reg as any).kids);
+  const labels = new Set<string>();
+
+  for (const kid of kidsRows) {
+    const label = String((kid as any)?.pricingTierLabel || '').trim();
+    if (label) labels.add(label);
+  }
+
+  // Legacy fallback for rows created before dependent-level pricingTierLabel existed.
+  if (labels.size === 0 && kidsRows.length > 0) {
+    const createdAt = (reg as any).createdAt || (reg as any).created_at;
+    const kidsAddedAt = (reg as any).kidsAddedAt || createdAt;
+    const stored = String((reg as any).kidsTierLabel || '').trim();
+    const fallback = stored || inferTierLabelFromDate(event.kidsPricing as PricingTier[] | undefined, kidsAddedAt) || 'N/A';
+    labels.add(fallback);
+  }
+
+  return Array.from(labels);
+};
+
 interface EventDetailsPageProps {
   event: Event;
   registrations: Registration[];
@@ -197,16 +231,14 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
     registrations
       .filter(r => r.eventId === event.id)
       .forEach(r => {
-        const kidsCount = Array.isArray((r as any).kids) ? (r as any).kids.length : 0;
-        if (kidsCount <= 0) return;
-        const createdAt = (r as any).createdAt || (r as any).created_at;
-        const kidsAddedAt = (r as any).kidsAddedAt || createdAt;
-        const stored = (r as any).kidsTierLabel;
-        const label = stored || inferTierLabelFromDate(event.kidsPricing, kidsAddedAt) || 'N/A';
-        map[label] = (map[label] || 0) + 1;
+        const labels = getRegistrationKidsTierLabels(event, r);
+        if (labels.length === 0) return;
+        labels.forEach((label) => {
+          map[label] = (map[label] || 0) + 1;
+        });
       });
     return map;
-  }, [registrations, event.id, event.kidsPricing]);
+  }, [registrations, event]);
 
   const tierUsers = useMemo(() => {
     if (!tierUsersModal) return [];
@@ -232,13 +264,9 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
           return effective === label;
         }
         // Children
-        const kidsCount = Array.isArray((r as any).kids) ? (r as any).kids.length : 0;
-        if (kidsCount <= 0) return false;
-        const createdAt = (r as any).createdAt || (r as any).created_at;
-        const kidsAddedAt = (r as any).kidsAddedAt || createdAt;
-        const stored = (r as any).kidsTierLabel;
-        const effective = stored || inferTierLabelFromDate(event.kidsPricing, kidsAddedAt) || 'N/A';
-        return effective === label;
+        const labels = getRegistrationKidsTierLabels(event, r);
+        if (labels.length === 0) return false;
+        return labels.includes(label);
       })
       .filter(r => {
         if (!q) return true;
@@ -265,10 +293,7 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
     tierUsersModal,
     tierUsersSearch,
     registrations,
-    event.id,
-    event.registrationPricing,
-    event.spousePricing,
-    event.kidsPricing,
+    event,
   ]);
 
   const exportTierUsersXlsx = () => {
