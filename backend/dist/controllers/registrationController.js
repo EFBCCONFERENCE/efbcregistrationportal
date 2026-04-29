@@ -38,6 +38,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RegistrationController = void 0;
 const Registration_1 = require("../models/Registration");
+const Group_1 = require("../models/Group");
 const emailService_1 = require("../services/emailService");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 function getEasternTimeMidnight(dateString) {
@@ -133,6 +134,49 @@ function getCurrentEasternTime() {
     }
     return guessUtc.getTime();
 }
+function asNum(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+}
+function computeKidsTotalFromRows(kids, fallbackPricePerKid) {
+    if (!Array.isArray(kids) || kids.length === 0)
+        return 0;
+    return kids.reduce((sum, k) => {
+        const explicit = asNum(k?.price);
+        return sum + (explicit !== undefined ? explicit : fallbackPricePerKid);
+    }, 0);
+}
+function groupCategoryMatchesWednesdayActivity(groupCategory, wednesdayActivity) {
+    const c = String(groupCategory || '').trim().toLowerCase();
+    const w = String(wednesdayActivity || '').trim().toLowerCase();
+    if (!w || w === 'none')
+        return false;
+    if (c === w)
+        return true;
+    const firstToken = w.split(/\s+/)[0] || w;
+    return w.includes(c) || c.includes(w) || c.includes(firstToken) || firstToken.includes(c);
+}
+async function removeRegistrantFromStaleActivityGroups(db, eventId, registrationId, newWednesdayActivity) {
+    const rows = await db.query('SELECT * FROM `activity_groups` WHERE eventId = ?', [eventId]);
+    for (const row of rows) {
+        let memberIds = [];
+        try {
+            memberIds = row.members ? (typeof row.members === 'string' ? JSON.parse(row.members) : row.members) : [];
+            if (!Array.isArray(memberIds))
+                memberIds = [];
+        }
+        catch {
+            memberIds = [];
+        }
+        if (!memberIds.includes(registrationId))
+            continue;
+        if (groupCategoryMatchesWednesdayActivity(String(row.category || ''), newWednesdayActivity))
+            continue;
+        const groupModel = Group_1.Group.fromDatabase(row);
+        groupModel.removeMember(registrationId);
+        await db.update('activity_groups', Number(row.id), groupModel.toDatabase());
+    }
+}
 class RegistrationController {
     constructor(db) {
         this.db = db;
@@ -151,6 +195,57 @@ class RegistrationController {
             return {};
         }
     }
+    normalizeRibbonNames(ribbons) {
+        if (!Array.isArray(ribbons))
+            return [];
+        const seen = new Set();
+        const normalized = [];
+        for (const ribbon of ribbons) {
+            const trimmed = String(ribbon || '').trim();
+            if (!trimmed)
+                continue;
+            const key = trimmed.toLowerCase();
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            normalized.push(trimmed);
+        }
+        return normalized.slice(0, 10);
+    }
+    parseEventRibbons(eventRow) {
+        if (!eventRow?.ribbons)
+            return [];
+        try {
+            const parsed = typeof eventRow.ribbons === 'string' ? JSON.parse(eventRow.ribbons) : eventRow.ribbons;
+            return this.normalizeRibbonNames(parsed);
+        }
+        catch {
+            return this.normalizeRibbonNames(String(eventRow.ribbons)
+                .split(',')
+                .map((value) => value.trim())
+                .filter(Boolean));
+        }
+    }
+    async getValidatedRegistrationRibbons(eventId, ribbons, extraAllowedRibbons) {
+        const normalized = this.normalizeRibbonNames(ribbons);
+        if (normalized.length === 0) {
+            return { valid: true, ribbons: [] };
+        }
+        const eventRow = await this.db.findById('events', Number(eventId));
+        if (!eventRow) {
+            return { valid: false, error: 'Event not found' };
+        }
+        const allowedRibbons = this.normalizeRibbonNames([
+            ...this.parseEventRibbons(eventRow),
+            ...this.normalizeRibbonNames(extraAllowedRibbons),
+        ]);
+        const allowedSet = new Set(allowedRibbons.map((r) => r.toLowerCase()));
+        const invalid = normalized.find((r) => !allowedSet.has(r.toLowerCase()));
+        if (invalid) {
+            return { valid: false, error: `Ribbon "${invalid}" is not configured for this event.` };
+        }
+        return { valid: true, ribbons: normalized };
+    }
     async getRegistrations(req, res) {
         try {
             const { page = 1, limit = 10, eventId, category, search } = req.query;
@@ -163,14 +258,16 @@ class RegistrationController {
             let registrations;
             let total;
             if (search) {
-                const searchCondition = `first_name LIKE '%${search}%' OR last_name LIKE '%${search}%' OR email LIKE '%${search}%' OR organization LIKE '%${search}%'`;
+                const searchCondition = `(first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR organization LIKE ?)`;
+                const searchValue = `%${search}%`;
                 let whereClause = searchCondition;
+                const searchParams = [searchValue, searchValue, searchValue, searchValue];
                 if (Object.keys(conditions).length > 0) {
                     const conditionClause = Object.keys(conditions).map(key => `${key} = ?`).join(' AND ');
                     whereClause = `${conditionClause} AND ${searchCondition}`;
                 }
-                registrations = await this.db.query(`SELECT * FROM registrations WHERE ${whereClause} LIMIT ? OFFSET ?`, [...Object.values(conditions), Number(limit), offset]);
-                total = await this.db.query(`SELECT COUNT(*) as count FROM registrations WHERE ${whereClause}`, Object.values(conditions));
+                registrations = await this.db.query(`SELECT * FROM registrations WHERE ${whereClause} LIMIT ? OFFSET ?`, [...Object.values(conditions), ...searchParams, Number(limit), offset]);
+                total = await this.db.query(`SELECT COUNT(*) as count FROM registrations WHERE ${whereClause}`, [...Object.values(conditions), ...searchParams]);
             }
             else {
                 registrations = await this.db.findAll('registrations', conditions, Number(limit), offset);
@@ -197,8 +294,82 @@ class RegistrationController {
             res.status(500).json(response);
         }
     }
+    async getMyRegistrations(req, res) {
+        try {
+            const auth = this.getAuth(req);
+            const uid = auth.id != null ? Number(auth.id) : NaN;
+            if (!auth.id || Number.isNaN(uid)) {
+                res.status(401).json({ success: false, error: 'Unauthorized' });
+                return;
+            }
+            const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+            const rows = await this.db.query(`SELECT * FROM registrations
+         WHERE user_id = ?
+           AND (status IS NULL OR status != 'cancelled')
+           AND cancellation_at IS NULL
+         ORDER BY updated_at DESC
+         LIMIT ${limit}`, [uid]);
+            const data = [];
+            for (const row of rows) {
+                try {
+                    data.push(Registration_1.Registration.fromDatabase(row).toJSON());
+                }
+                catch (rowErr) {
+                    console.error('getMyRegistrations: skipping registration row', row?.id, rowErr);
+                }
+            }
+            res.status(200).json({ success: true, data });
+        }
+        catch (error) {
+            console.error('Error fetching my registrations:', error);
+            res.status(500).json({ success: false, error: 'Failed to load your registrations' });
+        }
+    }
+    async getActivitySeatSummaryForEvent(req, res) {
+        try {
+            const auth = this.getAuth(req);
+            const uid = auth.id != null ? Number(auth.id) : NaN;
+            if (!auth.id || Number.isNaN(uid)) {
+                res.status(401).json({ success: false, error: 'Unauthorized' });
+                return;
+            }
+            const eventId = Number(req.params.eventId);
+            if (!eventId || Number.isNaN(eventId)) {
+                res.status(400).json({ success: false, error: 'Invalid event ID' });
+                return;
+            }
+            const rows = await this.db.query(`SELECT
+          wednesday_activity AS activityName,
+          SUM(CASE WHEN COALESCE(wednesday_activity_waitlisted, 0) = 0 THEN 1 ELSE 0 END) AS confirmedCount,
+          SUM(CASE WHEN COALESCE(wednesday_activity_waitlisted, 0) != 0 THEN 1 ELSE 0 END) AS waitlistedCount
+        FROM registrations
+        WHERE event_id = ?
+          AND (status IS NULL OR status != 'cancelled')
+          AND cancellation_at IS NULL
+        GROUP BY wednesday_activity`, [eventId]);
+            const activities = rows.map((r) => ({
+                activityName: String(r.activityName ?? ''),
+                confirmedCount: Number(r.confirmedCount ?? 0),
+                waitlistedCount: Number(r.waitlistedCount ?? 0),
+            }));
+            const response = {
+                success: true,
+                data: { eventId, activities },
+            };
+            res.status(200).json(response);
+        }
+        catch (error) {
+            console.error('Error fetching activity seat summary:', error);
+            res.status(500).json({ success: false, error: 'Failed to load activity seat summary' });
+        }
+    }
     async getRegistrationById(req, res) {
         try {
+            const auth = this.getAuth(req);
+            if (auth.id == null || Number.isNaN(Number(auth.id))) {
+                res.status(401).json({ success: false, error: 'Authentication required' });
+                return;
+            }
             const { id } = req.params;
             const registration = await this.db.findById('registrations', Number(id));
             if (!registration) {
@@ -207,6 +378,14 @@ class RegistrationController {
                     error: 'Registration not found'
                 };
                 res.status(404).json(response);
+                return;
+            }
+            const ownerId = Number(registration.user_id ?? registration.userId ?? NaN);
+            const requesterId = Number(auth.id);
+            const isAdmin = auth.role === 'admin';
+            const isOwner = !Number.isNaN(ownerId) && ownerId === requesterId;
+            if (!isAdmin && !isOwner) {
+                res.status(403).json({ success: false, error: 'Forbidden' });
                 return;
             }
             const response = {
@@ -227,6 +406,23 @@ class RegistrationController {
     async createRegistration(req, res) {
         try {
             const registrationData = req.body;
+            const auth = this.getAuth(req);
+            const isAdmin = auth.role === 'admin';
+            if (registrationData.ribbons !== undefined) {
+                if (!isAdmin) {
+                    res.status(403).json({ success: false, error: 'Only administrators can assign ribbons.' });
+                    return;
+                }
+                const ribbonValidation = await this.getValidatedRegistrationRibbons(registrationData.eventId, registrationData.ribbons);
+                if (!ribbonValidation.valid) {
+                    res.status(400).json({ success: false, error: ribbonValidation.error });
+                    return;
+                }
+                registrationData.ribbons = ribbonValidation.ribbons;
+            }
+            else {
+                registrationData.ribbons = [];
+            }
             registrationData.wednesdayActivityWaitlisted = false;
             registrationData.wednesdayActivityWaitlistedAt = undefined;
             if (registrationData.wednesdayActivity && registrationData.eventId) {
@@ -303,7 +499,7 @@ class RegistrationController {
                         registration.kidsTierLabel = kidsActive?.label || kidsActive?.name || undefined;
                         registration.kidsAddedAt = registration.kidsAddedAt || registration.createdAt;
                         const pricePerKid = kidsActive?.price ?? 0;
-                        total += pricePerKid * registration.kids.length;
+                        total += computeKidsTotalFromRows(registration.kids, pricePerKid);
                     }
                     registration.totalPrice = total || registration.totalPrice || 0;
                     const hasClientDiscount = typeof registration.discountAmount === 'number' &&
@@ -350,8 +546,6 @@ class RegistrationController {
                             console.error('Error incrementing discount code usage:', discountError);
                         }
                     }
-                    const auth = this.getAuth(req);
-                    const isAdmin = auth.role === 'admin';
                     if (isAdmin && registrationData.totalPrice !== undefined) {
                         registration.totalPrice = Number(registrationData.totalPrice);
                     }
@@ -360,9 +554,7 @@ class RegistrationController {
             catch (e) {
             }
             const dbPayload = registration.toDatabase();
-            const auth = this.getAuth(req);
-            const isAdmin = auth.role === 'admin';
-            if (isAdmin && (registration.paymentMethod === 'Card' || !registration.paid)) {
+            if (isAdmin && registration.paymentMethod !== 'Comp' && (registration.paymentMethod === 'Card' || !registration.paid)) {
                 if (!registration.paid) {
                     dbPayload.pending_payment_amount = dbPayload.total_price;
                     dbPayload.pending_payment_reason = 'Admin created registration (Payment Due)';
@@ -434,6 +626,10 @@ class RegistrationController {
             }
             const authForActivity = this.getAuth(req);
             const isAdminForActivity = authForActivity.role === 'admin';
+            if (!isAdminForActivity && authForActivity.id && Number(existingRow.user_id) !== Number(authForActivity.id)) {
+                res.status(403).json({ success: false, error: 'You can only update your own registration' });
+                return;
+            }
             const existingActivity = String(existingRow.wednesday_activity ?? '').trim();
             const incomingActivity = updateData.wednesdayActivity !== undefined
                 ? String(updateData.wednesdayActivity ?? '').trim()
@@ -446,6 +642,30 @@ class RegistrationController {
                     error: 'Only administrators can change the Wednesday activity after registration.',
                 });
                 return;
+            }
+            if (updateData.ribbons !== undefined) {
+                if (!isAdminForActivity) {
+                    res.status(403).json({
+                        success: false,
+                        error: 'Only administrators can assign ribbons.',
+                    });
+                    return;
+                }
+                const ribbonValidation = await this.getValidatedRegistrationRibbons(Number(existingRow.event_id), updateData.ribbons, (() => {
+                    try {
+                        return existingRow.ribbons
+                            ? (typeof existingRow.ribbons === 'string' ? JSON.parse(existingRow.ribbons) : existingRow.ribbons)
+                            : [];
+                    }
+                    catch {
+                        return [];
+                    }
+                })());
+                if (!ribbonValidation.valid) {
+                    res.status(400).json({ success: false, error: ribbonValidation.error });
+                    return;
+                }
+                updateData.ribbons = ribbonValidation.ribbons;
             }
             if (updateData.wednesdayActivity &&
                 updateData.wednesdayActivity !== existingRow.wednesday_activity) {
@@ -502,6 +722,7 @@ class RegistrationController {
                 emergencyContactName: 'emergency_contact_name',
                 emergencyContactPhone: 'emergency_contact_phone',
                 wednesdayActivity: 'wednesday_activity',
+                ribbons: 'ribbons',
                 wednesdayReception: 'wednesday_reception',
                 thursdayBreakfast: 'thursday_breakfast',
                 thursdayLuncheon: 'thursday_luncheon',
@@ -522,11 +743,15 @@ class RegistrationController {
                 childLastName: 'child_last_name',
                 childLunchTicket: 'child_lunch_ticket',
                 totalPrice: 'total_price',
+                paidAmount: 'paid_amount',
                 paymentMethod: 'payment_method',
                 paid: 'paid',
                 squarePaymentId: 'square_payment_id',
                 paidAt: 'paid_at',
+                spousePaymentId: 'spouse_payment_id',
                 spousePaidAt: 'spouse_paid_at',
+                kidsPaymentId: 'kids_payment_id',
+                kidsPaidAt: 'kids_paid_at',
                 discountCode: 'discount_code',
                 discountAmount: 'discount_amount',
                 kids: 'kids_data',
@@ -560,7 +785,24 @@ class RegistrationController {
                             value = null;
                         }
                     }
+                    else if (camelKey === 'kidsPaymentId') {
+                        if (Array.isArray(value)) {
+                            value = value.length > 0 ? JSON.stringify(value) : null;
+                        }
+                        else if (value !== null && value !== undefined && String(value).trim() !== '') {
+                            value = JSON.stringify([String(value).trim()]);
+                        }
+                        else {
+                            value = null;
+                        }
+                    }
                     else if (camelKey === 'kidsTotalPrice') {
+                        value = value !== null && value !== undefined ? Number(value) : null;
+                    }
+                    else if (camelKey === 'ribbons') {
+                        value = Array.isArray(value) && value.length > 0 ? JSON.stringify(value) : null;
+                    }
+                    else if (camelKey === 'paidAmount') {
                         value = value !== null && value !== undefined ? Number(value) : null;
                     }
                     else if (camelKey === 'spouseDinnerTicket') {
@@ -569,7 +811,7 @@ class RegistrationController {
                     else if (camelKey === 'isFirstTimeAttending' || camelKey === 'spouseBreakfast' || camelKey === 'paid') {
                         value = value === true || value === 1 ? 1 : 0;
                     }
-                    else if (camelKey === 'paidAt' || camelKey === 'spousePaidAt') {
+                    else if (camelKey === 'paidAt' || camelKey === 'spousePaidAt' || camelKey === 'kidsPaidAt') {
                         value = value ? new Date(value).toISOString().slice(0, 19).replace('T', ' ') : null;
                     }
                     else if (value === null || value === undefined) {
@@ -578,13 +820,20 @@ class RegistrationController {
                     dbPayload[dbKey] = value;
                 }
             }
+            if (updateDataObj.updateNotes && String(updateDataObj.updateNotes).trim()) {
+                const newEntry = String(updateDataObj.updateNotes).trim();
+                const existing = existingRow.update_notes ? String(existingRow.update_notes) : '';
+                dbPayload.update_notes = existing ? `${newEntry}\n${existing}` : newEntry;
+            }
             try {
                 const oldSpouseTicket = !!existingRow.spouse_dinner_ticket;
                 const newSpouseTicketRaw = updateDataObj.spouseDinnerTicket;
                 const newSpouseTicket = newSpouseTicketRaw !== undefined
                     ? (newSpouseTicketRaw === true || newSpouseTicketRaw === 'Yes' || newSpouseTicketRaw === 'yes' || newSpouseTicketRaw === 1)
                     : oldSpouseTicket;
-                const oldKidsData = existingRow.kids_data ? JSON.parse(existingRow.kids_data) : [];
+                const oldKidsData = existingRow.kids_data
+                    ? (typeof existingRow.kids_data === 'string' ? JSON.parse(existingRow.kids_data) : existingRow.kids_data)
+                    : [];
                 const oldKidsCount = Array.isArray(oldKidsData) ? oldKidsData.length : 0;
                 const newKids = updateDataObj.kids;
                 const newKidsCount = Array.isArray(newKids) ? newKids.length : oldKidsCount;
@@ -644,7 +893,9 @@ class RegistrationController {
                 const oldTotalPrice = Number(existingRow.total_price || 0);
                 const oldPaidAmount = Number(existingRow.paid_amount || (existingRow.paid ? oldTotalPrice : 0));
                 const oldSpouseTicket = existingRow.spouse_dinner_ticket || false;
-                const oldKidsData = existingRow.kids_data ? JSON.parse(existingRow.kids_data) : [];
+                const oldKidsData = existingRow.kids_data
+                    ? (typeof existingRow.kids_data === 'string' ? JSON.parse(existingRow.kids_data) : existingRow.kids_data)
+                    : [];
                 const oldKidsCount = Array.isArray(oldKidsData) ? oldKidsData.length : 0;
                 let newTotalPrice = oldTotalPrice;
                 let pendingAmount = 0;
@@ -696,14 +947,14 @@ class RegistrationController {
                             const newSpouseTicket = updateData.spouseDinnerTicket || false;
                             if (newSpouseTicket && !oldSpouseTicket) {
                                 const spouse = pick(spouseTiers);
-                                const spousePrice = spouse && typeof spouse.price === 'number' ? spouse.price : 200;
+                                const spousePrice = spouse && typeof spouse.price === 'number' ? spouse.price : 0;
                                 calculatedTotal += spousePrice;
                                 pendingAmount += spousePrice;
                                 reasonParts.push(`Spouse dinner ticket added ($${spousePrice.toFixed(2)})`);
                             }
                             else if (newSpouseTicket && oldSpouseTicket) {
                                 const spouse = pick(spouseTiers);
-                                const spousePrice = spouse && typeof spouse.price === 'number' ? spouse.price : 200;
+                                const spousePrice = spouse && typeof spouse.price === 'number' ? spouse.price : 0;
                                 calculatedTotal += spousePrice;
                             }
                             if (updateData.spouseBreakfast && now <= bEnd) {
@@ -712,18 +963,18 @@ class RegistrationController {
                             const newKids = updateData.kids || [];
                             const newKidsCount = Array.isArray(newKids) ? newKids.length : 0;
                             if (newKidsCount > oldKidsCount) {
-                                const addedKidsCount = newKidsCount - oldKidsCount;
                                 const kidsActive = pick(kidsTiers);
-                                const pricePerKid = kidsActive?.price ?? 50;
-                                const kidsPrice = pricePerKid * addedKidsCount;
+                                const pricePerKid = kidsActive?.price ?? 0;
+                                const addedKids = Array.isArray(newKids) ? newKids.slice(oldKidsCount) : [];
+                                const kidsPrice = computeKidsTotalFromRows(addedKids, pricePerKid);
                                 calculatedTotal += kidsPrice;
                                 pendingAmount += kidsPrice;
-                                reasonParts.push(`${addedKidsCount} children added ($${kidsPrice.toFixed(2)})`);
+                                reasonParts.push(`${Array.isArray(addedKids) ? addedKids.length : 0} dependent(s) added ($${kidsPrice.toFixed(2)})`);
                             }
                             else if (newKidsCount > 0) {
                                 const kidsActive = pick(kidsTiers);
-                                const pricePerKid = kidsActive?.price ?? 50;
-                                calculatedTotal += pricePerKid * newKidsCount;
+                                const pricePerKid = kidsActive?.price ?? 0;
+                                calculatedTotal += computeKidsTotalFromRows(newKids, pricePerKid);
                             }
                             if (existingRow.discount_code) {
                                 try {
@@ -766,10 +1017,30 @@ class RegistrationController {
                 if (adminReason) {
                     finalReason += (finalReason ? '. ' : '') + adminReason;
                 }
+                const existingPending = Number(existingRow.pending_payment_amount || 0);
+                const newPending = existingPending + pendingAmount;
+                const paymentMethodLowerEarly = String(updateDataObj.paymentMethod ?? '').toLowerCase();
+                const priorPaidEvidenceEarly = oldPaidAmount > 0 ||
+                    !!existingRow.square_payment_id ||
+                    !!existingRow.spouse_payment_id ||
+                    !!existingRow.kids_payment_id;
+                const adminCompWaivesAfterPriorPayment = paymentMethodLowerEarly === 'comp' && priorPaidEvidenceEarly;
+                const newSpouseTicketRawComp = updateDataObj.spouseDinnerTicket;
+                const newSpouseTicketComp = newSpouseTicketRawComp !== undefined
+                    ? (newSpouseTicketRawComp === true ||
+                        newSpouseTicketRawComp === 'Yes' ||
+                        newSpouseTicketRawComp === 'yes' ||
+                        newSpouseTicketRawComp === 1)
+                    : !!existingRow.spouse_dinner_ticket;
+                const newKidsRawComp = updateDataObj.kids;
+                const newKidsCountComp = Array.isArray(newKidsRawComp)
+                    ? newKidsRawComp.length
+                    : oldKidsCount;
+                const spouseOrKidsAddedThisEdit = (!oldSpouseTicket && newSpouseTicketComp) || newKidsCountComp > oldKidsCount;
                 if (pendingAmount > 0) {
                     dbPayload.total_price = newTotalPrice;
                     dbPayload.paid_amount = oldPaidAmount;
-                    dbPayload.pending_payment_amount = pendingAmount;
+                    dbPayload.pending_payment_amount = newPending;
                     dbPayload.pending_payment_reason = finalReason;
                     dbPayload.pending_payment_created_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
                     dbPayload.paid = 0;
@@ -782,7 +1053,9 @@ class RegistrationController {
                     dbPayload.pending_payment_reason = null;
                     dbPayload.pending_payment_created_at = null;
                 }
-                if (updateData.paid === true || updateData.paid === 1) {
+                if (!adminCompWaivesAfterPriorPayment &&
+                    pendingAmount <= 0 &&
+                    (updateData.paid === true || updateData.paid === 1)) {
                     dbPayload.paid = 1;
                     dbPayload.paid_amount = newTotalPrice;
                     dbPayload.pending_payment_amount = 0;
@@ -794,17 +1067,101 @@ class RegistrationController {
                         dbPayload.paid_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
                     }
                 }
+                const selectedPaymentMethod = String(updateDataObj.paymentMethod || existingRow.payment_method || '').toLowerCase();
+                const adminMarkedPaid = updateDataObj.paid === true || updateDataObj.paid === 1 || String(updateDataObj.paid).toLowerCase() === 'true';
+                if (selectedPaymentMethod === 'check' && adminMarkedPaid) {
+                    dbPayload.paid = 1;
+                    dbPayload.pending_payment_amount = 0;
+                    dbPayload.pending_payment_reason = null;
+                    dbPayload.pending_payment_created_at = null;
+                    const effectiveTotalPrice = Number(dbPayload.total_price !== undefined ? dbPayload.total_price : newTotalPrice);
+                    dbPayload.paid_amount = Number.isFinite(effectiveTotalPrice) ? effectiveTotalPrice : oldTotalPrice;
+                    const paidAtStr = existingRow.paid_at ? String(existingRow.paid_at) : '';
+                    const isMissingPaidAt = !paidAtStr || paidAtStr.startsWith('0000-00-00');
+                    if (isMissingPaidAt) {
+                        dbPayload.paid_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
+                    }
+                }
+                const paymentMethodLower = paymentMethodLowerEarly;
+                const priorPaidEvidence = priorPaidEvidenceEarly;
+                if (paymentMethodLower === 'comp' &&
+                    priorPaidEvidence &&
+                    (existingPending > 0 || pendingAmount > 0 || spouseOrKidsAddedThisEdit)) {
+                    const compensatePreviousDue = updateDataObj.compensatePreviousDue === undefined
+                        ? true
+                        : (updateDataObj.compensatePreviousDue === true ||
+                            updateDataObj.compensatePreviousDue === 1 ||
+                            String(updateDataObj.compensatePreviousDue).toLowerCase() === 'true');
+                    const compScopeParts = [];
+                    if (!oldSpouseTicket && newSpouseTicketComp)
+                        compScopeParts.push('Spouse');
+                    if (newKidsCountComp > oldKidsCount)
+                        compScopeParts.push('Children');
+                    const compScopeNote = compScopeParts.length > 0
+                        ? `Comp. ${compScopeParts.join(', ')}${compensatePreviousDue ? '' : ' (new only)'}`
+                        : (compensatePreviousDue ? 'Comp. Previous Due' : '');
+                    dbPayload.payment_method = existingRow.payment_method || dbPayload.payment_method;
+                    if (compensatePreviousDue) {
+                        dbPayload.pending_payment_amount = 0;
+                        dbPayload.pending_payment_reason = null;
+                        dbPayload.pending_payment_created_at = null;
+                        dbPayload.total_price = Math.max(0, oldTotalPrice - existingPending);
+                        dbPayload.paid = 1;
+                    }
+                    else {
+                        dbPayload.pending_payment_amount = existingPending;
+                        dbPayload.pending_payment_reason = existingRow.pending_payment_reason || null;
+                        dbPayload.pending_payment_created_at = existingRow.pending_payment_created_at || null;
+                        dbPayload.total_price = oldTotalPrice;
+                        dbPayload.paid = existingPending > 0 ? 0 : 1;
+                    }
+                    dbPayload.paid_amount = oldPaidAmount;
+                    const existingPaidAtStr = existingRow.paid_at ? String(existingRow.paid_at) : '';
+                    const keepPaidAt = existingPaidAtStr &&
+                        !existingPaidAtStr.startsWith('0000-00-00') &&
+                        existingPaidAtStr.trim() !== '';
+                    if (keepPaidAt) {
+                        dbPayload.paid_at = existingRow.paid_at;
+                    }
+                    if (compScopeNote) {
+                        const existingNotes = dbPayload.update_notes !== undefined
+                            ? String(dbPayload.update_notes || '')
+                            : String(existingRow.update_notes || '');
+                        const firstNoteLine = existingNotes.split('\n')[0]?.trim();
+                        if (firstNoteLine !== compScopeNote) {
+                            dbPayload.update_notes = existingNotes ? `${compScopeNote}\n${existingNotes}` : compScopeNote;
+                        }
+                    }
+                }
+                else if (paymentMethodLowerEarly === 'comp' &&
+                    priorPaidEvidenceEarly) {
+                    dbPayload.payment_method = existingRow.payment_method || dbPayload.payment_method;
+                    dbPayload.paid_amount = oldPaidAmount;
+                    const pas = existingRow.paid_at ? String(existingRow.paid_at) : '';
+                    if (pas && !pas.startsWith('0000-00-00') && pas.trim() !== '') {
+                        dbPayload.paid_at = existingRow.paid_at;
+                    }
+                }
             }
             const isPaidUpdate = updateDataObj.paid === true || updateDataObj.paid === 1 || updateDataObj.paid === 'true';
             if (!isAdminUpdate && isPaidUpdate && existingRow.pending_payment_amount && Number(existingRow.pending_payment_amount) > 0) {
                 const totalPrice = Number(existingRow.total_price || 0);
                 const previousPaidAmount = Number(existingRow.paid_amount || 0);
                 const pending = Number(existingRow.pending_payment_amount || 0);
-                const newPaidAmount = previousPaidAmount + pending;
+                const clientPaidAmount = Number(updateDataObj.paidAmount);
+                const dbComputedPaidAmount = previousPaidAmount + pending;
+                let newPaidAmount;
+                if (Number.isFinite(clientPaidAmount) && clientPaidAmount > 0) {
+                    newPaidAmount = Math.max(clientPaidAmount, dbComputedPaidAmount);
+                }
+                else {
+                    newPaidAmount = dbComputedPaidAmount;
+                }
                 if (dbPayload.total_price !== undefined) {
                     delete dbPayload.total_price;
                 }
                 dbPayload.paid_amount = newPaidAmount;
+                dbPayload.total_price = totalPrice;
                 dbPayload.pending_payment_amount = 0;
                 dbPayload.pending_payment_reason = null;
                 dbPayload.pending_payment_created_at = null;
@@ -825,6 +1182,22 @@ class RegistrationController {
                 wednesday_activity: dbPayload.wednesday_activity,
                 pending_payment_amount: dbPayload.pending_payment_amount
             });
+            if (updateDataObj.wednesdayActivity !== undefined) {
+                const oldWa = String(existingRow.wednesday_activity || '').trim();
+                const newWa = dbPayload.wednesday_activity !== undefined
+                    ? String(dbPayload.wednesday_activity ?? '').trim()
+                    : oldWa;
+                if (newWa !== oldWa) {
+                    await removeRegistrantFromStaleActivityGroups(this.db, Number(existingRow.event_id), Number(id), newWa);
+                    const ga = existingRow.group_assigned;
+                    if (ga) {
+                        const ag = await this.db.findById('activity_groups', Number(ga));
+                        if (!ag || !groupCategoryMatchesWednesdayActivity(String(ag.category || ''), newWa)) {
+                            dbPayload.group_assigned = null;
+                        }
+                    }
+                }
+            }
             const updateResult = await this.db.update('registrations', Number(id), dbPayload);
             console.log(`[UPDATE] Database update result:`, updateResult);
             const verifyRow = await this.db.findById('registrations', Number(id));
@@ -835,7 +1208,7 @@ class RegistrationController {
                 wednesday_activity: verifyRow?.wednesday_activity
             });
             const updatedRegistration = Registration_1.Registration.fromDatabase(verifyRow);
-            if (isAdminUpdate && verifyRow.pending_payment_amount && Number(verifyRow.pending_payment_amount) > 0 && updatedRegistration.paymentMethod !== 'Check') {
+            if (isAdminUpdate && verifyRow.pending_payment_amount && Number(verifyRow.pending_payment_amount) > 0 && updatedRegistration.paymentMethod === 'Card') {
                 try {
                     const { sendPendingPaymentEmail } = await Promise.resolve().then(() => __importStar(require('../services/emailService')));
                     const eventRow = await this.db.findById('events', updatedRegistration.eventId);

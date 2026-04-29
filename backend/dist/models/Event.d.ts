@@ -9,6 +9,7 @@ export declare class Event {
         name: string;
         seatLimit?: number;
     }> | string[];
+    ribbons?: string[];
     location?: string;
     description?: string[];
     createdAt?: string;

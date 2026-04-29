@@ -12,9 +12,11 @@ class EventController {
             const offset = (Number(page) - 1) * Number(limit);
             let conditions = {};
             if (search) {
-                const searchCondition = `name LIKE '%${search}%' OR location LIKE '%${search}%'`;
-                const events = await this.db.query(`SELECT * FROM events WHERE ${searchCondition} LIMIT ? OFFSET ?`, [Number(limit), offset]);
-                const total = await this.db.query(`SELECT COUNT(*) as count FROM events WHERE ${searchCondition}`);
+                const searchCondition = `(name LIKE ? OR location LIKE ?)`;
+                const searchValue = `%${search}%`;
+                const searchParams = [searchValue, searchValue];
+                const events = await this.db.query(`SELECT * FROM events WHERE ${searchCondition} LIMIT ? OFFSET ?`, [...searchParams, Number(limit), offset]);
+                const total = await this.db.query(`SELECT COUNT(*) as count FROM events WHERE ${searchCondition}`, searchParams);
                 const response = {
                     success: true,
                     data: events.map((row) => Event_1.Event.fromDatabase(row).toJSON()),

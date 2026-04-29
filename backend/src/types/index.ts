@@ -29,6 +29,7 @@ export interface Event {
   date: string; // End date (kept for backward compatibility)
   startDate?: string; // Start date
   activities?: Array<{ name: string; seatLimit?: number }> | string[]; // Support both formats for backward compatibility
+  ribbons?: string[];
   location?: string;
   description?: string | string[];
   createdAt?: string;
@@ -83,6 +84,7 @@ export interface Registration {
   wednesdayActivity: 'Golf Tournament' | 'Fishing' | 'Networking' | 'None';
   wednesdayActivityWaitlisted?: boolean;
   wednesdayActivityWaitlistedAt?: string;
+  ribbons?: string[];
   golfHandicap?: string;
   clubRentals?: string;
   massageTimeSlot?: string;
@@ -194,7 +196,8 @@ export interface CreateEventRequest {
   name: string;
   date: string; // End date
   startDate?: string; // Start date
-  activities?: string[];
+  activities?: Array<{ name: string; seatLimit?: number }> | string[];
+  ribbons?: string[];
   location?: string;
   description?: string | string[];
   spousePricing?: Array<{ label: string; price: number; startDate?: string; endDate?: string }>;
@@ -241,6 +244,7 @@ export interface CreateRegistrationRequest {
   // Computed server-side when seat limits are reached
   wednesdayActivityWaitlisted?: boolean;
   wednesdayActivityWaitlistedAt?: string;
+  ribbons?: string[];
   golfHandicap?: string;
   clubRentals?: string;
   wednesdayReception: 'I will attend' | 'I will NOT attend';

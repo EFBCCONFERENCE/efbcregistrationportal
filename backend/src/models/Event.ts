@@ -7,6 +7,7 @@ export class Event {
   public date: string; // End date
   public startDate?: string; // Start date
   public activities?: Array<{ name: string; seatLimit?: number }> | string[];
+  public ribbons?: string[];
   public location?: string;
   public description?: string[];
   public createdAt?: string;
@@ -25,6 +26,7 @@ export class Event {
     this.date = data.date || new Date().toISOString().split('T')[0];
     this.startDate = (data as any).startDate || (data as any).start_date || undefined;
     this.activities = data.activities || [];
+    this.ribbons = Array.isArray((data as any).ribbons) ? (data as any).ribbons : [];
     this.location = data.location || '';
     this.description = Array.isArray(data.description) ? data.description : (data.description ? [data.description] : []);
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
@@ -48,6 +50,7 @@ export class Event {
       startDate: this.startDate,
       endDate: this.date, // Alias for backward compatibility
       activities: this.activities,
+      ribbons: this.ribbons,
       location: this.location,
       description: this.description,
       createdAt: this.createdAt,
@@ -68,6 +71,7 @@ export class Event {
       date: this.date,
       start_date: this.startDate || null,
       activities: this.activities ? JSON.stringify(this.activities) : null,
+      ribbons: this.ribbons && this.ribbons.length > 0 ? JSON.stringify(this.ribbons) : null,
       location: this.location,
       description: this.description && this.description.length > 0 ? JSON.stringify(this.description) : null,
       created_at: this.createdAt,
@@ -84,6 +88,7 @@ export class Event {
   // Create from database row
   static fromDatabase(row: any): Event {
     let activities: Array<{ name: string; seatLimit?: number }> | string[] = [];
+    let ribbons: string[] = [];
     if (row.activities) {
       try {
         const parsed = typeof row.activities === 'string' ? JSON.parse(row.activities) : row.activities;
@@ -101,6 +106,16 @@ export class Event {
         activities = Array.isArray(row.activities) 
           ? (typeof row.activities[0] === 'string' ? row.activities : [])
           : String(row.activities).split(',').map((s: string) => s.trim()).filter(Boolean);
+      }
+    }
+    if (row.ribbons) {
+      try {
+        const parsed = typeof row.ribbons === 'string' ? JSON.parse(row.ribbons) : row.ribbons;
+        if (Array.isArray(parsed)) {
+          ribbons = parsed.map((r: any) => String(r || '').trim()).filter(Boolean);
+        }
+      } catch (e) {
+        ribbons = String(row.ribbons).split(',').map((s: string) => s.trim()).filter(Boolean);
       }
     }
     let spousePricing: any[] = [];
@@ -142,6 +157,7 @@ export class Event {
       date: row.date,
       startDate: row.start_date || (row as any).startDate,
       activities: activities,
+      ribbons,
       location: row.location,
       description: (() => {
         if (!row.description) return [];

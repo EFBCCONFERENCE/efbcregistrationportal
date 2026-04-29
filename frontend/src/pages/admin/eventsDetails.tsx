@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useState } from 'react';
 import { Event, Registration, DiscountCode } from '../../types';
-import { getActivityNames, getActivitySeatLimit } from '../../utils/eventUtils';
+import { getActivityNames, getActivitySeatLimit, normalizeRibbons } from '../../utils/eventUtils';
 import { formatDateShort } from '../../utils/dateUtils';
 import apiClient from '../../services/apiClient';
 import { Modal } from '../../components/Modal';
@@ -115,6 +115,8 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
   const [waitlistSearch, setWaitlistSearch] = useState('');
   const [confirmedActivity, setConfirmedActivity] = useState<string | null>(null);
   const [confirmedSearch, setConfirmedSearch] = useState('');
+  const [selectedRibbon, setSelectedRibbon] = useState<string | null>(null);
+  const [selectedRibbonSearch, setSelectedRibbonSearch] = useState('');
   const [promoteLoadingId, setPromoteLoadingId] = useState<number | null>(null);
   const [promoteError, setPromoteError] = useState<string | null>(null);
 
@@ -153,6 +155,50 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
       !(r as any).cancellationAt
     );
   }, [registrations, event.id]);
+
+  const eventRibbons = useMemo(() => normalizeRibbons(event.ribbons), [event.ribbons]);
+
+  const ribbonDetails = useMemo(() => {
+    return eventRibbons.map((ribbonName) => {
+      const assigned = activeRegistrations.filter((registration) =>
+        normalizeRibbons(registration.ribbons).some((ribbon) => ribbon.toLowerCase() === ribbonName.toLowerCase())
+      );
+
+      return {
+        name: ribbonName,
+        count: assigned.length,
+      };
+    });
+  }, [eventRibbons, activeRegistrations]);
+
+  const selectedRibbonRegistrations = useMemo(() => {
+    if (!selectedRibbon) return [];
+    const q = selectedRibbonSearch.trim().toLowerCase();
+
+    return activeRegistrations
+      .filter((registration) =>
+        normalizeRibbons(registration.ribbons).some((ribbon) => ribbon.toLowerCase() === selectedRibbon.toLowerCase())
+      )
+      .filter((registration) => {
+        if (!q) return true;
+        const hay = [
+          registration.badgeName,
+          registration.firstName,
+          registration.lastName,
+          registration.email,
+          registration.organization,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(q);
+      })
+      .sort((a, b) => {
+        const aMs = new Date(a.createdAt || '').getTime() || 0;
+        const bMs = new Date(b.createdAt || '').getTime() || 0;
+        return aMs - bMs;
+      });
+  }, [selectedRibbon, selectedRibbonSearch, activeRegistrations]);
 
   // Registrations that used a discount code (per code)
   const discountUseCounts = useMemo(() => {
@@ -655,6 +701,47 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
           </div>
         )}
 
+        {eventRibbons.length > 0 && (
+          <div className="card" style={{ marginBottom: '20px' }}>
+            <h2 style={{ marginTop: '0', marginBottom: '20px', borderBottom: '2px solid #e0e0e0', paddingBottom: '10px' }}>
+              Ribbon Summary
+            </h2>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Ribbon</th>
+                    <th>Assigned Attendees</th>
+                    <th>View</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ribbonDetails.map((ribbon) => (
+                    <tr key={ribbon.name}>
+                      <td><strong>{ribbon.name}</strong></td>
+                      <td>{ribbon.count}</td>
+                      <td>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ padding: '6px 10px', fontSize: '12px' }}
+                          disabled={ribbon.count === 0}
+                          onClick={() => {
+                            setSelectedRibbon(ribbon.name);
+                            setSelectedRibbonSearch('');
+                          }}
+                          title={ribbon.count ? 'View attendees with this ribbon' : 'No attendees assigned'}
+                        >
+                          Attendees ({ribbon.count})
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* Waitlisted modal */}
         {waitlistActivity && (
           <Modal
@@ -844,6 +931,76 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
                         <td>{r.mobile}</td>
                         <td>{formatDateTimeEST(r.createdAt)}</td>
                         <td>{(r as any).paid ? 'Yes' : 'No'}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Modal>
+        )}
+
+        {selectedRibbon && (
+          <Modal
+            title={`Ribbon Attendees — ${selectedRibbon}`}
+            onClose={() => {
+              setSelectedRibbon(null);
+              setSelectedRibbonSearch('');
+            }}
+            size="xl"
+            footer={
+              <button className="btn btn-secondary" onClick={() => setSelectedRibbon(null)}>
+                Close
+              </button>
+            }
+          >
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px' }}>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Search ribbon attendees (name, email, organization)..."
+                value={selectedRibbonSearch}
+                onChange={(e) => setSelectedRibbonSearch(e.target.value)}
+              />
+              <div style={{ fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                Total: {selectedRibbonRegistrations.length}
+              </div>
+            </div>
+
+            <div className="table-wrapper">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Badge Name</th>
+                    <th>First</th>
+                    <th>Last</th>
+                    <th>Email</th>
+                    <th>Organization</th>
+                    <th>Mobile</th>
+                    <th>Registered At (EST)</th>
+                    <th>Paid?</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedRibbonRegistrations.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} style={{ padding: '16px', color: '#6b7280' }}>
+                        No active attendees are assigned to this ribbon.
+                      </td>
+                    </tr>
+                  ) : (
+                    selectedRibbonRegistrations.map((registration) => (
+                      <tr key={registration.id}>
+                        <td>{registration.id}</td>
+                        <td><strong>{registration.badgeName || `${registration.firstName} ${registration.lastName}`.trim()}</strong></td>
+                        <td>{registration.firstName}</td>
+                        <td>{registration.lastName}</td>
+                        <td>{registration.email}</td>
+                        <td>{registration.organization}</td>
+                        <td>{registration.mobile}</td>
+                        <td>{formatDateTimeEST(registration.createdAt)}</td>
+                        <td>{(registration as any).paid ? 'Yes' : 'No'}</td>
                       </tr>
                     ))
                   )}

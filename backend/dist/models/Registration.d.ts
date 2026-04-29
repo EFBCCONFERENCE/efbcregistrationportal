@@ -26,6 +26,7 @@ export declare class Registration {
     wednesdayActivity: 'Golf Tournament' | 'Fishing' | 'Networking' | 'None';
     wednesdayActivityWaitlisted?: boolean;
     wednesdayActivityWaitlistedAt?: string;
+    ribbons?: string[];
     wednesdayReception: 'I will attend' | 'I will NOT attend';
     thursdayBreakfast: 'I will attend' | 'I will NOT attend';
     thursdayLunch: 'I will attend' | 'I will NOT attend';
@@ -56,6 +57,8 @@ export declare class Registration {
         lastName: string;
         badgeName: string;
         age: number;
+        dependentType?: 'child' | 'family';
+        pricingTierLabel?: string;
         price?: number;
         lunchTicket?: boolean;
     }>;
@@ -64,7 +67,7 @@ export declare class Registration {
     childLastName?: string;
     childLunchTicket?: boolean;
     totalPrice: number;
-    paymentMethod: 'Card' | 'Check';
+    paymentMethod: 'Card' | 'Check' | 'Comp';
     name: string;
     category: string;
     createdAt?: string;
@@ -92,6 +95,7 @@ export declare class Registration {
     pendingPaymentAmount?: number;
     pendingPaymentReason?: string;
     pendingPaymentCreatedAt?: string;
+    updateNotes?: string;
     private normalizeEmail;
     private isSameEmail;
     private toTitleCaseName;

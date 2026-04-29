@@ -27,6 +27,7 @@ export class Registration {
   public wednesdayActivity: 'Golf Tournament' | 'Fishing' | 'Networking' | 'None';
   public wednesdayActivityWaitlisted?: boolean;
   public wednesdayActivityWaitlistedAt?: string;
+  public ribbons?: string[];
   public wednesdayReception: 'I will attend' | 'I will NOT attend';
   public thursdayBreakfast: 'I will attend' | 'I will NOT attend';
   public thursdayLunch: 'I will attend' | 'I will NOT attend';
@@ -183,6 +184,9 @@ export class Registration {
     this.wednesdayActivity = data.wednesdayActivity || 'None';
     this.wednesdayActivityWaitlisted = (data as any).wednesdayActivityWaitlisted ?? (data as any).wednesday_activity_waitlisted ?? false;
     this.wednesdayActivityWaitlistedAt = (data as any).wednesdayActivityWaitlistedAt ?? (data as any).wednesday_activity_waitlisted_at ?? undefined;
+    this.ribbons = Array.isArray((data as any).ribbons)
+      ? (data as any).ribbons.map((r: any) => String(r || '').trim()).filter(Boolean)
+      : undefined;
     this.wednesdayReception = data.wednesdayReception || 'I will attend';
     this.thursdayBreakfast = data.thursdayBreakfast || 'I will attend';
     // Support both thursdayLunch/thursdayLuncheon and thursdayReception/thursdayDinner for frontend compatibility
@@ -322,6 +326,7 @@ export class Registration {
       wednesdayActivity: this.wednesdayActivity,
       wednesdayActivityWaitlisted: !!this.wednesdayActivityWaitlisted,
       wednesdayActivityWaitlistedAt: this.wednesdayActivityWaitlistedAt,
+      ribbons: this.ribbons,
       wednesdayReception: this.wednesdayReception,
       thursdayBreakfast: this.thursdayBreakfast,
       thursdayLunch: this.thursdayLunch,
@@ -423,6 +428,7 @@ export class Registration {
       wednesday_activity: this.wednesdayActivity || null,
       wednesday_activity_waitlisted: this.wednesdayActivityWaitlisted ? 1 : 0,
       wednesday_activity_waitlisted_at: this.wednesdayActivityWaitlistedAt ? this.formatDateForDB(this.wednesdayActivityWaitlistedAt) : null,
+      ribbons: this.ribbons && this.ribbons.length > 0 ? JSON.stringify(this.ribbons) : null,
       wednesday_reception: this.wednesdayReception || null,
       thursday_breakfast: this.thursdayBreakfast || null,
       thursday_luncheon: this.thursdayLunch || null,
@@ -518,6 +524,17 @@ export class Registration {
       wednesdayActivity: row.wednesday_activity,
       wednesdayActivityWaitlisted: row.wednesday_activity_waitlisted !== undefined ? !!row.wednesday_activity_waitlisted : false,
       wednesdayActivityWaitlistedAt: row.wednesday_activity_waitlisted_at ?? undefined,
+      ribbons: (() => {
+        if (!row.ribbons) return undefined;
+        try {
+          const parsed = typeof row.ribbons === 'string' ? JSON.parse(row.ribbons) : row.ribbons;
+          return Array.isArray(parsed)
+            ? parsed.map((r: any) => String(r || '').trim()).filter(Boolean)
+            : undefined;
+        } catch (e) {
+          return String(row.ribbons).split(',').map((s: string) => s.trim()).filter(Boolean);
+        }
+      })(),
       wednesdayReception: row.wednesday_reception,
       thursdayBreakfast: row.thursday_breakfast,
       thursdayLunch: row.thursday_luncheon,

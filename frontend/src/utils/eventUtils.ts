@@ -37,3 +37,24 @@ export const normalizeActivities = (
   return activities as Array<{ name: string; seatLimit?: number }>;
 };
 
+/**
+ * Normalize event ribbons / registration ribbon selections.
+ */
+export const normalizeRibbons = (ribbons?: string[]): string[] => {
+  if (!Array.isArray(ribbons) || ribbons.length === 0) return [];
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const ribbon of ribbons) {
+    const trimmed = String(ribbon || '').trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(trimmed);
+  }
+
+  return normalized;
+};
+

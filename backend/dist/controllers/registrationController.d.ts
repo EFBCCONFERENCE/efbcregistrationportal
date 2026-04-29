@@ -4,7 +4,12 @@ export declare class RegistrationController {
     private db;
     constructor(db: DatabaseService);
     private getAuth;
+    private normalizeRibbonNames;
+    private parseEventRibbons;
+    private getValidatedRegistrationRibbons;
     getRegistrations(req: Request, res: Response): Promise<void>;
+    getMyRegistrations(req: Request, res: Response): Promise<void>;
+    getActivitySeatSummaryForEvent(req: Request, res: Response): Promise<void>;
     getRegistrationById(req: Request, res: Response): Promise<void>;
     createRegistration(req: Request, res: Response): Promise<void>;
     updateRegistration(req: Request, res: Response): Promise<void>;

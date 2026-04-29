@@ -122,6 +122,7 @@ const createTables = async () => {
         date DATE NOT NULL,
         start_date DATE NULL,
         activities JSON,
+        ribbons JSON,
         location VARCHAR(500),
         description TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -153,6 +154,7 @@ const createTables = async () => {
         wednesday_activity VARCHAR(255),
         wednesday_activity_waitlisted BOOLEAN DEFAULT FALSE,
         wednesday_activity_waitlisted_at TIMESTAMP NULL,
+        ribbons JSON,
         registration_tier_label VARCHAR(255) NULL,
         spouse_tier_label VARCHAR(255) NULL,
         kids_tier_label VARCHAR(255) NULL,
@@ -202,6 +204,7 @@ const createTables = async () => {
     await migrateTierTracking();
     await migrateTierTracking();
     await migrateUpdateNotes();
+    await migrateRibbonsFeature();
 
     // Activity Groups table (basic definition; columns may be extended by migrations)
     await databaseService.query(`
@@ -616,6 +619,38 @@ const migrateUpdateNotes = async (): Promise<void> => {
     }
   } catch (error: any) {
     console.error('Error migrating update_notes column:', error?.message || error);
+  }
+};
+
+const migrateRibbonsFeature = async (): Promise<void> => {
+  try {
+    const dbNameRows: any[] = await databaseService.query('SELECT DATABASE() as db');
+    const dbName = dbNameRows[0]?.db;
+    if (!dbName) return;
+
+    const eventCols: any[] = await databaseService.query(
+      'SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+      [dbName, 'events']
+    );
+    const registrationCols: any[] = await databaseService.query(
+      'SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?',
+      [dbName, 'registrations']
+    );
+
+    const hasEventRibbons = eventCols.some((c: any) => c.COLUMN_NAME === 'ribbons');
+    const hasRegistrationRibbons = registrationCols.some((c: any) => c.COLUMN_NAME === 'ribbons');
+
+    if (!hasEventRibbons) {
+      await databaseService.query('ALTER TABLE `events` ADD COLUMN `ribbons` JSON NULL AFTER `activities`');
+      console.log('Added ribbons column to events table');
+    }
+
+    if (!hasRegistrationRibbons) {
+      await databaseService.query('ALTER TABLE `registrations` ADD COLUMN `ribbons` JSON NULL AFTER `wednesday_activity_waitlisted_at`');
+      console.log('Added ribbons column to registrations table');
+    }
+  } catch (error) {
+    console.error('Error migrating ribbons feature:', error);
   }
 };
 

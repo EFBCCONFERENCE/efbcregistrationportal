@@ -9,7 +9,7 @@ import {
   isEventExpired,
 } from '../../types';
 import { formatDateShort } from '../../utils/dateUtils';
-import { getActivityNames, getActivitySeatLimit } from '../../utils/eventUtils';
+import { getActivityNames, getActivitySeatLimit, normalizeRibbons } from '../../utils/eventUtils';
 import { COUNTRY_OPTIONS, getRegionOptionsForCountry, normalizeCountryCode } from '../../utils/addressOptions';
 import apiClient from '../../services/apiClient';
 import { Modal } from '../../components/Modal';
@@ -386,6 +386,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
 
     // Conference Events
     wednesdayActivity: registration?.wednesdayActivity || '',
+    ribbons: normalizeRibbons(registration?.ribbons),
     golfHandicap: registration?.golfHandicap || '',
     massageTimeSlot: registration?.massageTimeSlot || '8:00 AM- 10:00 AM',
     pickleballEquipment: (registration as any)?.pickleballEquipment !== undefined ? (registration as any).pickleballEquipment : undefined,
@@ -1174,6 +1175,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
         userId: user.id,
         eventId: event.id,
         ...formData,
+        ...(isAdminEdit ? { ribbons: selectedRibbons } : {}),
         // Force spouse ticket to true if payment was made
         spouseDinnerTicket: hadSpousePayment ? true : formData.spouseDinnerTicket,
         specialRequests: (formData as any).specialRequests || '',
@@ -1422,6 +1424,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
         userId: user.id,
         eventId: event.id,
         ...formData,
+        ...(isAdminEdit ? { ribbons: selectedRibbons } : {}),
         totalPrice: formData.totalPrice || registration?.totalPrice || '0',
         badgeName: toTitleCaseName(formData.badgeName || ''),
         specialRequests: (formData as any).specialRequests || '',
@@ -1628,6 +1631,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
         userId: user.id,
         eventId: event.id,
         ...formData,
+        ...(isAdminEdit ? { ribbons: selectedRibbons } : {}),
         totalPrice: formData.totalPrice || registration?.totalPrice || '0',
         badgeName: toTitleCaseName(formData.badgeName || ''),
         specialRequests: (formData as any).specialRequests || '',
@@ -1863,6 +1867,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
         userId: user.id,
         eventId: event.id,
         ...formData,
+        ...(isAdminEdit ? { ribbons: selectedRibbons } : {}),
         totalPrice: formData.totalPrice || registration?.totalPrice || '0',
         badgeName: toTitleCaseName(formData.badgeName || ''),
         specialRequests: (formData as any).specialRequests || '',
@@ -2191,6 +2196,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
         userId: user.id,
         eventId: event.id,
         ...formData,
+        ...(isAdminEdit ? { ribbons: selectedRibbons } : {}),
         totalPrice: finalTotal.toString(), // Save the amount AFTER discount (no processing fee)
         badgeName: toTitleCaseName(formData.badgeName || ''),
         specialRequests: (formData as any).specialRequests || '',
@@ -2464,6 +2470,11 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
   }, [formData.wednesdayActivity]);
 
   const wednesdayActivityLocked = isEditing && !isAdminEdit;
+  const availableRibbons = useMemo(
+    () => normalizeRibbons([...(event?.ribbons || []), ...(registration?.ribbons || [])]),
+    [event?.ribbons, registration?.ribbons]
+  );
+  const selectedRibbons = normalizeRibbons(formData.ribbons);
 
   const handleInputChange = (field: string, value: any) => {
     if (field === 'wednesdayActivity' && wednesdayActivityLocked) {
@@ -2500,6 +2511,16 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
       return updated;
     });
     if (errors[field]) setErrors(prev => ({ ...prev, [field]: '' }));
+  };
+
+  const handleRibbonToggle = (ribbonName: string) => {
+    const selected = normalizeRibbons(formData.ribbons);
+    const isSelected = selected.some((ribbon) => ribbon.toLowerCase() === ribbonName.toLowerCase());
+    const next = isSelected
+      ? selected.filter((ribbon) => ribbon.toLowerCase() !== ribbonName.toLowerCase())
+      : [...selected, ribbonName];
+
+    handleInputChange('ribbons', normalizeRibbons(next));
   };
 
   if (!event) {
@@ -2936,6 +2957,30 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
                 return null;
               })()}
             </div>
+            {isAdminEdit && availableRibbons.length > 0 && (
+              <div className="form-group">
+                <label className="form-label">Ribbon</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                  {availableRibbons.map((ribbonName) => {
+                    const isSelected = selectedRibbons.some((ribbon) => ribbon.toLowerCase() === ribbonName.toLowerCase());
+                    return (
+                      <button
+                        key={ribbonName}
+                        type="button"
+                        className={`btn ${isSelected ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => handleRibbonToggle(ribbonName)}
+                        style={{ padding: '8px 14px', borderRadius: '999px' }}
+                      >
+                        {isSelected ? 'Selected: ' : ''}{ribbonName}
+                      </button>
+                    );
+                  })}
+                </div>
+                <small className="form-hint" style={{ display: 'block', marginTop: '8px' }}>
+                  Admins can assign multiple ribbons such as Sponsors, Speakers, or Committee.
+                </small>
+              </div>
+            )}
             {(getActivityNames(event.activities).some(a => a.toLowerCase().includes('golf')) && (formData.wednesdayActivity || '').toLowerCase().includes('golf')) && (
               <>
                 <div className="form-group">

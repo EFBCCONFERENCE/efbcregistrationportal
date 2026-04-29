@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Event, DiscountCode } from '../../types';
-import { normalizeActivities } from '../../utils/eventUtils';
+import { normalizeActivities, normalizeRibbons } from '../../utils/eventUtils';
 import { Modal } from '../../components/Modal';
 import apiClient from '../../services/apiClient';
 import '../../styles/EventFormModal.css';
@@ -29,7 +29,9 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
   const [description, setDescription] = useState<string[]>([]);
   // Activities state: Fixed to use object array format for type safety (supports both old string[] and new object[] formats)
   const [activities, setActivities] = useState<Array<{ name: string; seatLimit?: number }>>([]);
+  const [ribbons, setRibbons] = useState<string[]>([]);
   const [newActivity, setNewActivity] = useState('');
+  const [newRibbon, setNewRibbon] = useState('');
   const [newActivitySeatLimit, setNewActivitySeatLimit] = useState<number | ''>('');
   const [editingActivityIndex, setEditingActivityIndex] = useState<number | null>(null);
   const [editActivityName, setEditActivityName] = useState<string>('');
@@ -83,6 +85,7 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
     // This ensures type safety by converting both formats to the object array format
     // IMPORTANT: This fix resolves the TypeScript compilation error for activities initialization
     setActivities(normalizeActivities(event.activities));
+    setRibbons(normalizeRibbons(event.ribbons));
     setRegistrationPricing(event.registrationPricing || registrationPricing);
     setSpousePricing(event.spousePricing && event.spousePricing.length ? event.spousePricing : spousePricing);
     setKidsPricing(event.kidsPricing && event.kidsPricing.length ? (event.kidsPricing as KidsPricingTier[]) : kidsPricing);
@@ -178,6 +181,17 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
     setNewActivity('');
     setNewActivitySeatLimit('');
   };
+
+  const addRibbon = () => {
+    const ribbonName = newRibbon.trim();
+    if (!ribbonName) return;
+    setRibbons(prev => normalizeRibbons([...prev, ribbonName]));
+    setNewRibbon('');
+  };
+
+  const removeRibbon = (ribbonName: string) => {
+    setRibbons(prev => prev.filter(ribbon => ribbon.toLowerCase() !== ribbonName.toLowerCase()));
+  };
   const handleRemoveActivityClick = (activityName: string) => {
     setActivityToDelete(activityName);
   };
@@ -268,6 +282,7 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
         location: location.trim(),
         description: descriptionArray,
         activities,
+        ribbons,
         registrationPricing,
         spousePricing,
         kidsPricing,
@@ -406,6 +421,53 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
                           onClick={() => handleRemoveActivityClick(activity.name)}
                           disabled={isSubmitting}
                           aria-label={`Remove activity ${activity.name}`}
+                        >
+                          <img src="/bin.png" alt="" className="activity-action-img" width={18} height={18} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Ribbon</label>
+              <div className="activity-input-group">
+                <input
+                  className="form-control"
+                  type="text"
+                  value={newRibbon}
+                  onChange={(e) => setNewRibbon(e.target.value)}
+                  placeholder="Ribbon name (e.g., Sponsors, Speakers, Committee)"
+                  disabled={isSubmitting}
+                  onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addRibbon())}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-add-activity"
+                  onClick={addRibbon}
+                  disabled={isSubmitting || !newRibbon.trim()}
+                >
+                  Add
+                </button>
+              </div>
+              <small className="form-hint" style={{ display: 'block', marginTop: '0.4rem' }}>
+                Add reusable attendee tags such as Sponsors, Speakers, or Committee.
+              </small>
+              {ribbons.length > 0 && (
+                <div className="activities-list">
+                  <h4 className="activities-title">Current Ribbons:</h4>
+                  <div className="activities-tags">
+                    {ribbons.map((ribbon) => (
+                      <span key={ribbon} className="activity-tag">
+                        {ribbon}
+                        <button
+                          type="button"
+                          className="activity-remove"
+                          onClick={() => removeRibbon(ribbon)}
+                          disabled={isSubmitting}
+                          aria-label={`Remove ribbon ${ribbon}`}
                         >
                           <img src="/bin.png" alt="" className="activity-action-img" width={18} height={18} />
                         </button>

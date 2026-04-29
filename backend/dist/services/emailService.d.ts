@@ -43,6 +43,18 @@ export declare function sendCancellationRequestAdminEmail(params: {
     eventName?: string;
     reason?: string | null;
 }): Promise<void>;
+export declare function sendPairingRequestAdminEmail(params: {
+    requestId: number;
+    registrationId: number;
+    activityLabel: string;
+    registrantName?: string;
+    registrantEmail?: string;
+    eventName?: string;
+    partnerNames: string[];
+    boatPreference?: string | null;
+    additionalNotes?: string | null;
+    wednesdayActivity?: string;
+}): Promise<void>;
 export declare function sendCancellationRequestConfirmationEmail(params: {
     to: string;
     userName?: string;

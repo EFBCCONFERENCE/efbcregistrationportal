@@ -205,6 +205,69 @@ export class RegistrationController {
     }
   }
 
+  private normalizeRibbonNames(ribbons: unknown): string[] {
+    if (!Array.isArray(ribbons)) return [];
+
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+
+    for (const ribbon of ribbons) {
+      const trimmed = String(ribbon || '').trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      normalized.push(trimmed);
+    }
+
+    return normalized.slice(0, 10);
+  }
+
+  private parseEventRibbons(eventRow: any): string[] {
+    if (!eventRow?.ribbons) return [];
+
+    try {
+      const parsed = typeof eventRow.ribbons === 'string' ? JSON.parse(eventRow.ribbons) : eventRow.ribbons;
+      return this.normalizeRibbonNames(parsed);
+    } catch {
+      return this.normalizeRibbonNames(
+        String(eventRow.ribbons)
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+      );
+    }
+  }
+
+  private async getValidatedRegistrationRibbons(
+    eventId: number,
+    ribbons: unknown,
+    extraAllowedRibbons?: unknown
+  ): Promise<{ valid: true; ribbons: string[] } | { valid: false; error: string }> {
+    const normalized = this.normalizeRibbonNames(ribbons);
+    if (normalized.length === 0) {
+      return { valid: true, ribbons: [] };
+    }
+
+    const eventRow = await this.db.findById('events', Number(eventId));
+    if (!eventRow) {
+      return { valid: false, error: 'Event not found' };
+    }
+
+    const allowedRibbons = this.normalizeRibbonNames([
+      ...this.parseEventRibbons(eventRow),
+      ...this.normalizeRibbonNames(extraAllowedRibbons),
+    ]);
+    const allowedSet = new Set(allowedRibbons.map((r) => r.toLowerCase()));
+    const invalid = normalized.find((r) => !allowedSet.has(r.toLowerCase()));
+
+    if (invalid) {
+      return { valid: false, error: `Ribbon "${invalid}" is not configured for this event.` };
+    }
+
+    return { valid: true, ribbons: normalized };
+  }
+
   // Get all registrations
   async getRegistrations(req: Request, res: Response): Promise<void> {
     try {
@@ -401,6 +464,24 @@ export class RegistrationController {
   async createRegistration(req: Request, res: Response): Promise<void> {
     try {
       const registrationData: CreateRegistrationRequest = req.body;
+      const auth = this.getAuth(req);
+      const isAdmin = auth.role === 'admin';
+
+      if ((registrationData as any).ribbons !== undefined) {
+        if (!isAdmin) {
+          res.status(403).json({ success: false, error: 'Only administrators can assign ribbons.' } satisfies ApiResponse);
+          return;
+        }
+
+        const ribbonValidation = await this.getValidatedRegistrationRibbons(registrationData.eventId, (registrationData as any).ribbons);
+        if (!ribbonValidation.valid) {
+          res.status(400).json({ success: false, error: ribbonValidation.error } satisfies ApiResponse);
+          return;
+        }
+        (registrationData as any).ribbons = ribbonValidation.ribbons;
+      } else {
+        (registrationData as any).ribbons = [];
+      }
 
       // Never trust client-provided waitlist fields. Compute server-side.
       (registrationData as any).wednesdayActivityWaitlisted = false;
@@ -569,8 +650,6 @@ export class RegistrationController {
             }
           }
           // If Admin overrides price, use that instead
-          const auth = this.getAuth(req);
-          const isAdmin = auth.role === 'admin';
           if (isAdmin && (registrationData as any).totalPrice !== undefined) {
              registration.totalPrice = Number((registrationData as any).totalPrice);
           }
@@ -582,9 +661,6 @@ export class RegistrationController {
       const dbPayload = registration.toDatabase();
 
       // If Admin creates an unpaid registration (e.g. Card payment, pay later), set pending amount
-      const auth = this.getAuth(req);
-      const isAdmin = auth.role === 'admin';
-      
       if (isAdmin && registration.paymentMethod !== 'Comp' && (registration.paymentMethod === 'Card' || !registration.paid)) {
         // If not marked as paid, the entire amount is pending
         if (!registration.paid) {
@@ -702,6 +778,35 @@ export class RegistrationController {
         });
         return;
       }
+
+      if ((updateData as any).ribbons !== undefined) {
+        if (!isAdminForActivity) {
+          res.status(403).json({
+            success: false,
+            error: 'Only administrators can assign ribbons.',
+          });
+          return;
+        }
+
+        const ribbonValidation = await this.getValidatedRegistrationRibbons(
+          Number(existingRow.event_id),
+          (updateData as any).ribbons,
+          (() => {
+            try {
+              return existingRow.ribbons
+                ? (typeof existingRow.ribbons === 'string' ? JSON.parse(existingRow.ribbons) : existingRow.ribbons)
+                : [];
+            } catch {
+              return [];
+            }
+          })()
+        );
+        if (!ribbonValidation.valid) {
+          res.status(400).json({ success: false, error: ribbonValidation.error } satisfies ApiResponse);
+          return;
+        }
+        (updateData as any).ribbons = ribbonValidation.ribbons;
+      }
       
       // If activity is being changed, check seat limit for the NEW activity
       if (updateData.wednesdayActivity && 
@@ -774,6 +879,7 @@ export class RegistrationController {
         emergencyContactName: 'emergency_contact_name',
         emergencyContactPhone: 'emergency_contact_phone',
         wednesdayActivity: 'wednesday_activity',
+        ribbons: 'ribbons',
         wednesdayReception: 'wednesday_reception',
         thursdayBreakfast: 'thursday_breakfast',
         thursdayLuncheon: 'thursday_luncheon',
@@ -858,6 +964,8 @@ export class RegistrationController {
             }
           } else if (camelKey === 'kidsTotalPrice') {
             value = value !== null && value !== undefined ? Number(value) : null;
+          } else if (camelKey === 'ribbons') {
+            value = Array.isArray(value) && value.length > 0 ? JSON.stringify(value) : null;
           } else if (camelKey === 'paidAmount') {
             value = value !== null && value !== undefined ? Number(value) : null;
           } else if (camelKey === 'spouseDinnerTicket') {

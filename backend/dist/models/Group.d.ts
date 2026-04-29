@@ -7,6 +7,7 @@ export declare class Group {
     members: number[];
     createdAt?: string;
     updatedAt?: string;
+    static normalizeMembersInput(raw: unknown): number[];
     private formatDateForDB;
     constructor(data: Partial<IGroup>);
     toJSON(): IGroup;

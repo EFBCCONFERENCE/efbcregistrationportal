@@ -9,6 +9,7 @@ class Event {
         this.date = data.date || new Date().toISOString().split('T')[0];
         this.startDate = data.startDate || data.start_date || undefined;
         this.activities = data.activities || [];
+        this.ribbons = Array.isArray(data.ribbons) ? data.ribbons : [];
         this.location = data.location || '';
         this.description = Array.isArray(data.description) ? data.description : (data.description ? [data.description] : []);
         const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
@@ -30,6 +31,7 @@ class Event {
             startDate: this.startDate,
             endDate: this.date,
             activities: this.activities,
+            ribbons: this.ribbons,
             location: this.location,
             description: this.description,
             createdAt: this.createdAt,
@@ -48,6 +50,7 @@ class Event {
             date: this.date,
             start_date: this.startDate || null,
             activities: this.activities ? JSON.stringify(this.activities) : null,
+            ribbons: this.ribbons && this.ribbons.length > 0 ? JSON.stringify(this.ribbons) : null,
             location: this.location,
             description: this.description && this.description.length > 0 ? JSON.stringify(this.description) : null,
             created_at: this.createdAt,
@@ -62,6 +65,7 @@ class Event {
     }
     static fromDatabase(row) {
         let activities = [];
+        let ribbons = [];
         if (row.activities) {
             try {
                 const parsed = typeof row.activities === 'string' ? JSON.parse(row.activities) : row.activities;
@@ -78,6 +82,17 @@ class Event {
                 activities = Array.isArray(row.activities)
                     ? (typeof row.activities[0] === 'string' ? row.activities : [])
                     : String(row.activities).split(',').map((s) => s.trim()).filter(Boolean);
+            }
+        }
+        if (row.ribbons) {
+            try {
+                const parsed = typeof row.ribbons === 'string' ? JSON.parse(row.ribbons) : row.ribbons;
+                if (Array.isArray(parsed)) {
+                    ribbons = parsed.map((r) => String(r || '').trim()).filter(Boolean);
+                }
+            }
+            catch (e) {
+                ribbons = String(row.ribbons).split(',').map((s) => s.trim()).filter(Boolean);
             }
         }
         let spousePricing = [];
@@ -137,6 +152,7 @@ class Event {
             date: row.date,
             startDate: row.start_date || row.startDate,
             activities: activities,
+            ribbons,
             location: row.location,
             description: (() => {
                 if (!row.description)

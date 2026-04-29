@@ -75,6 +75,9 @@ class Registration {
         this.wednesdayActivity = data.wednesdayActivity || 'None';
         this.wednesdayActivityWaitlisted = data.wednesdayActivityWaitlisted ?? data.wednesday_activity_waitlisted ?? false;
         this.wednesdayActivityWaitlistedAt = data.wednesdayActivityWaitlistedAt ?? data.wednesday_activity_waitlisted_at ?? undefined;
+        this.ribbons = Array.isArray(data.ribbons)
+            ? data.ribbons.map((r) => String(r || '').trim()).filter(Boolean)
+            : undefined;
         this.wednesdayReception = data.wednesdayReception || 'I will attend';
         this.thursdayBreakfast = data.thursdayBreakfast || 'I will attend';
         this.thursdayLunch = data.thursdayLunch || data.thursdayLuncheon || 'I will attend';
@@ -168,6 +171,18 @@ class Registration {
         this.pendingPaymentAmount = data.pendingPaymentAmount ?? data.pending_payment_amount ?? undefined;
         this.pendingPaymentReason = data.pendingPaymentReason ?? data.pending_payment_reason ?? undefined;
         this.pendingPaymentCreatedAt = data.pendingPaymentCreatedAt ?? data.pending_payment_created_at ?? undefined;
+        if (this.paymentMethod === 'Comp') {
+            this.totalPrice = 0;
+            this.paid = true;
+            this.paidAt = this.paidAt || new Date().toISOString();
+            this.squarePaymentId = undefined;
+            this.spousePaymentId = undefined;
+            this.kidsPaymentId = undefined;
+            this.pendingPaymentAmount = 0;
+            this.pendingPaymentReason = undefined;
+            this.pendingPaymentCreatedAt = undefined;
+        }
+        this.updateNotes = data.updateNotes ?? data.update_notes ?? undefined;
     }
     toJSON() {
         const base = {
@@ -197,6 +212,7 @@ class Registration {
             wednesdayActivity: this.wednesdayActivity,
             wednesdayActivityWaitlisted: !!this.wednesdayActivityWaitlisted,
             wednesdayActivityWaitlistedAt: this.wednesdayActivityWaitlistedAt,
+            ribbons: this.ribbons,
             wednesdayReception: this.wednesdayReception,
             thursdayBreakfast: this.thursdayBreakfast,
             thursdayLunch: this.thursdayLunch,
@@ -282,6 +298,8 @@ class Registration {
             base.pendingPaymentReason = this.pendingPaymentReason;
         if (this.pendingPaymentCreatedAt)
             base.pendingPaymentCreatedAt = this.pendingPaymentCreatedAt;
+        if (this.updateNotes)
+            base.updateNotes = this.updateNotes;
         return base;
     }
     nullIfUndefined(value) {
@@ -314,6 +332,7 @@ class Registration {
             wednesday_activity: this.wednesdayActivity || null,
             wednesday_activity_waitlisted: this.wednesdayActivityWaitlisted ? 1 : 0,
             wednesday_activity_waitlisted_at: this.wednesdayActivityWaitlistedAt ? this.formatDateForDB(this.wednesdayActivityWaitlistedAt) : null,
+            ribbons: this.ribbons && this.ribbons.length > 0 ? JSON.stringify(this.ribbons) : null,
             wednesday_reception: this.wednesdayReception || null,
             thursday_breakfast: this.thursdayBreakfast || null,
             thursday_luncheon: this.thursdayLunch || null,
@@ -404,6 +423,19 @@ class Registration {
             wednesdayActivity: row.wednesday_activity,
             wednesdayActivityWaitlisted: row.wednesday_activity_waitlisted !== undefined ? !!row.wednesday_activity_waitlisted : false,
             wednesdayActivityWaitlistedAt: row.wednesday_activity_waitlisted_at ?? undefined,
+            ribbons: (() => {
+                if (!row.ribbons)
+                    return undefined;
+                try {
+                    const parsed = typeof row.ribbons === 'string' ? JSON.parse(row.ribbons) : row.ribbons;
+                    return Array.isArray(parsed)
+                        ? parsed.map((r) => String(r || '').trim()).filter(Boolean)
+                        : undefined;
+                }
+                catch (e) {
+                    return String(row.ribbons).split(',').map((s) => s.trim()).filter(Boolean);
+                }
+            })(),
             wednesdayReception: row.wednesday_reception,
             thursdayBreakfast: row.thursday_breakfast,
             thursdayLunch: row.thursday_luncheon,
@@ -495,6 +527,7 @@ class Registration {
             pendingPaymentAmount: row.pending_payment_amount ?? undefined,
             pendingPaymentReason: row.pending_payment_reason ?? undefined,
             pendingPaymentCreatedAt: row.pending_payment_created_at ?? undefined,
+            updateNotes: row.update_notes ?? undefined,
             name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
             category: row.wednesday_activity || 'Networking',
         });

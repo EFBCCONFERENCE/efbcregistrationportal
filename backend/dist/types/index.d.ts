@@ -3,6 +3,8 @@ export interface Kid {
     lastName: string;
     badgeName: string;
     age: number;
+    dependentType?: 'child' | 'family';
+    pricingTierLabel?: string;
     price?: number;
     lunchTicket?: boolean;
 }
@@ -26,6 +28,7 @@ export interface Event {
         name: string;
         seatLimit?: number;
     }> | string[];
+    ribbons?: string[];
     location?: string;
     description?: string | string[];
     createdAt?: string;
@@ -44,6 +47,15 @@ export interface Event {
     }>;
     breakfastPrice?: number;
     breakfastEndDate?: string;
+    kidsPricing?: Array<{
+        label: string;
+        price: number;
+        startDate?: string;
+        endDate?: string;
+        appliesTo?: 'child' | 'family' | 'both';
+        minAge?: number;
+        maxAge?: number;
+    }>;
 }
 export interface Registration {
     id: number;
@@ -76,6 +88,7 @@ export interface Registration {
     wednesdayActivity: 'Golf Tournament' | 'Fishing' | 'Networking' | 'None';
     wednesdayActivityWaitlisted?: boolean;
     wednesdayActivityWaitlistedAt?: string;
+    ribbons?: string[];
     golfHandicap?: string;
     clubRentals?: string;
     massageTimeSlot?: string;
@@ -111,7 +124,7 @@ export interface Registration {
     childLastName?: string;
     childLunchTicket?: boolean;
     totalPrice: number;
-    paymentMethod: 'Card' | 'Check';
+    paymentMethod: 'Card' | 'Check' | 'Comp';
     paid?: boolean;
     paidAt?: string;
     squarePaymentId?: string;
@@ -127,6 +140,7 @@ export interface Registration {
     pendingPaymentAmount?: number;
     pendingPaymentReason?: string;
     pendingPaymentCreatedAt?: string;
+    updateNotes?: string;
     name: string;
     category: string;
     createdAt?: string;
@@ -158,7 +172,11 @@ export interface CreateEventRequest {
     name: string;
     date: string;
     startDate?: string;
-    activities?: string[];
+    activities?: Array<{
+        name: string;
+        seatLimit?: number;
+    }> | string[];
+    ribbons?: string[];
     location?: string;
     description?: string | string[];
     spousePricing?: Array<{
@@ -175,6 +193,15 @@ export interface CreateEventRequest {
     }>;
     breakfastPrice?: number;
     breakfastEndDate?: string;
+    kidsPricing?: Array<{
+        label: string;
+        price: number;
+        startDate?: string;
+        endDate?: string;
+        appliesTo?: 'child' | 'family' | 'both';
+        minAge?: number;
+        maxAge?: number;
+    }>;
 }
 export interface UpdateEventRequest extends Partial<CreateEventRequest> {
 }
@@ -204,6 +231,7 @@ export interface CreateRegistrationRequest {
     wednesdayActivity: 'Golf Tournament' | 'Fishing' | 'Networking' | 'None';
     wednesdayActivityWaitlisted?: boolean;
     wednesdayActivityWaitlistedAt?: string;
+    ribbons?: string[];
     golfHandicap?: string;
     clubRentals?: string;
     wednesdayReception: 'I will attend' | 'I will NOT attend';
@@ -219,7 +247,7 @@ export interface CreateRegistrationRequest {
     spouseLastName?: string;
     spouseDinnerTicket: boolean;
     totalPrice: number;
-    paymentMethod: 'Card' | 'Check';
+    paymentMethod: 'Card' | 'Check' | 'Comp';
     name: string;
     category: string;
 }
