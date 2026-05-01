@@ -467,12 +467,12 @@ export class RegistrationController {
       const auth = this.getAuth(req);
       const isAdmin = auth.role === 'admin';
 
-      if ((registrationData as any).ribbons !== undefined) {
-        if (!isAdmin) {
-          res.status(403).json({ success: false, error: 'Only administrators can assign ribbons.' } satisfies ApiResponse);
-          return;
-        }
+      // Forms may send ribbons: []; only admins may set ribbons. Strip for everyone else.
+      if (!isAdmin) {
+        delete (registrationData as any).ribbons;
+      }
 
+      if ((registrationData as any).ribbons !== undefined) {
         const ribbonValidation = await this.getValidatedRegistrationRibbons(registrationData.eventId, (registrationData as any).ribbons);
         if (!ribbonValidation.valid) {
           res.status(400).json({ success: false, error: ribbonValidation.error } satisfies ApiResponse);
@@ -779,15 +779,12 @@ export class RegistrationController {
         return;
       }
 
-      if ((updateData as any).ribbons !== undefined) {
-        if (!isAdminForActivity) {
-          res.status(403).json({
-            success: false,
-            error: 'Only administrators can assign ribbons.',
-          });
-          return;
-        }
+      // Clients may send ribbons: []; only admins may change ribbons.
+      if (!isAdminForActivity) {
+        delete (updateData as any).ribbons;
+      }
 
+      if ((updateData as any).ribbons !== undefined) {
         const ribbonValidation = await this.getValidatedRegistrationRibbons(
           Number(existingRow.event_id),
           (updateData as any).ribbons,
