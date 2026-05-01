@@ -3411,7 +3411,8 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
               )}
             </div>
 
-          {/* Child/Family Member Section */}
+          {/* Child/Family Member Section (temporarily hidden for attendee mode) */}
+          {isAdminEdit && (
           <div className="form-section">
             <h3 className="section-title">Child &amp; Family Member Registration</h3>
             <p className="form-help-text">Add child or family member attendees. Pricing is auto-detected from active tiers.</p>
@@ -3601,6 +3602,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
               </div>
             )} */}
           </div>
+          )}
 
           {/* Child section - only visible to admins */}
           {/* {isAdminEdit && (
