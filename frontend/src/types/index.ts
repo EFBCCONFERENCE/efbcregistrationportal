@@ -27,6 +27,7 @@ export interface Event {
   endDate?: string; // Alias for date
   activities?: Array<{ name: string; seatLimit?: number }> | string[]; // Support both formats for backward compatibility
   ribbons?: string[];
+  allowAttendeeEdits?: boolean;
   location?: string;
   description?: string[];
   createdAt?: string;

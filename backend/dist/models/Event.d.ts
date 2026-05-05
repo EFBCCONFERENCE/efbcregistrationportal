@@ -10,6 +10,7 @@ export declare class Event {
         seatLimit?: number;
     }> | string[];
     ribbons?: string[];
+    allowAttendeeEdits?: boolean;
     location?: string;
     description?: string[];
     createdAt?: string;

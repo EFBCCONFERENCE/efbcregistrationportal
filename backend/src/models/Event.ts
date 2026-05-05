@@ -8,6 +8,7 @@ export class Event {
   public startDate?: string; // Start date
   public activities?: Array<{ name: string; seatLimit?: number }> | string[];
   public ribbons?: string[];
+  public allowAttendeeEdits?: boolean;
   public location?: string;
   public description?: string[];
   public createdAt?: string;
@@ -27,6 +28,9 @@ export class Event {
     this.startDate = (data as any).startDate || (data as any).start_date || undefined;
     this.activities = data.activities || [];
     this.ribbons = Array.isArray((data as any).ribbons) ? (data as any).ribbons : [];
+    this.allowAttendeeEdits = (data as any).allowAttendeeEdits !== undefined
+      ? Boolean((data as any).allowAttendeeEdits)
+      : ((data as any).allow_attendee_edits !== undefined ? Boolean((data as any).allow_attendee_edits) : true);
     this.location = data.location || '';
     this.description = Array.isArray(data.description) ? data.description : (data.description ? [data.description] : []);
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
@@ -51,6 +55,7 @@ export class Event {
       endDate: this.date, // Alias for backward compatibility
       activities: this.activities,
       ribbons: this.ribbons,
+      allowAttendeeEdits: this.allowAttendeeEdits !== false,
       location: this.location,
       description: this.description,
       createdAt: this.createdAt,
@@ -72,6 +77,7 @@ export class Event {
       start_date: this.startDate || null,
       activities: this.activities ? JSON.stringify(this.activities) : null,
       ribbons: this.ribbons && this.ribbons.length > 0 ? JSON.stringify(this.ribbons) : null,
+      allow_attendee_edits: this.allowAttendeeEdits === false ? 0 : 1,
       location: this.location,
       description: this.description && this.description.length > 0 ? JSON.stringify(this.description) : null,
       created_at: this.createdAt,
@@ -158,6 +164,7 @@ export class Event {
       startDate: row.start_date || (row as any).startDate,
       activities: activities,
       ribbons,
+      allowAttendeeEdits: row.allow_attendee_edits !== undefined ? Boolean(row.allow_attendee_edits) : true,
       location: row.location,
       description: (() => {
         if (!row.description) return [];

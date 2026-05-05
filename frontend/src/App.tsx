@@ -132,6 +132,9 @@ const App: React.FC = () => {
               ? JSON.parse(e.activities)
               : []),
         ribbons: parseArr(e.ribbons),
+        allowAttendeeEdits: (e.allowAttendeeEdits ?? e.allow_attendee_edits) === undefined
+          ? true
+          : Boolean(e.allowAttendeeEdits ?? e.allow_attendee_edits),
         location: e.location,
         description: e.description,
         // Normalize pricing fields (handle camelCase/snake_case and stringified JSON)

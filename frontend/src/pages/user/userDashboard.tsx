@@ -35,6 +35,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     registrations.find(r => r.userId === user.id && r.eventId === activeEvent?.id), 
     [registrations, user, activeEvent]
   );
+  const attendeeEditsAllowed = activeEvent?.allowAttendeeEdits !== false;
   const hasPendingBalance = Number((userRegistration as any)?.pendingPaymentAmount || 0) > 0;
 
   // NOTE: Per requirements, dashboard cards show global event counts now
@@ -115,19 +116,27 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 </div>
               ) : (
                 <div className="event-actions">
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => onBeginRegistration(activeEvent.id, hasPendingBalance)}
-                  >
-                    {hasPendingBalance ? 'Pay' : 'Edit'}
-                  </button>
-                  <button
-                    className="btn btn-danger"
-                    onClick={() => handleCancelRegistration(userRegistration.id)}
-                    disabled={pendingCancellationIds.includes(userRegistration.id)}
-                  >
-                    {pendingCancellationIds.includes(userRegistration.id) ? 'Request Sent' : 'Request to Cancel'}
-                  </button>
+                  {attendeeEditsAllowed ? (
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => onBeginRegistration(activeEvent.id, hasPendingBalance)}
+                    >
+                      {hasPendingBalance ? 'Pay' : 'Edit'}
+                    </button>
+                  ) : (
+                    <p className="form-hint" style={{ margin: 0 }}>
+                      Registration updates are closed for attendees. Please contact an administrator for changes.
+                    </p>
+                  )}
+                  {attendeeEditsAllowed && (
+                    <button
+                      className="btn btn-danger"
+                      onClick={() => handleCancelRegistration(userRegistration.id)}
+                      disabled={pendingCancellationIds.includes(userRegistration.id)}
+                    >
+                      {pendingCancellationIds.includes(userRegistration.id) ? 'Request Sent' : 'Request to Cancel'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

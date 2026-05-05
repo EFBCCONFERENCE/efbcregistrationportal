@@ -10,6 +10,9 @@ class Event {
         this.startDate = data.startDate || data.start_date || undefined;
         this.activities = data.activities || [];
         this.ribbons = Array.isArray(data.ribbons) ? data.ribbons : [];
+        this.allowAttendeeEdits = data.allowAttendeeEdits !== undefined
+            ? Boolean(data.allowAttendeeEdits)
+            : (data.allow_attendee_edits !== undefined ? Boolean(data.allow_attendee_edits) : true);
         this.location = data.location || '';
         this.description = Array.isArray(data.description) ? data.description : (data.description ? [data.description] : []);
         const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
@@ -32,6 +35,7 @@ class Event {
             endDate: this.date,
             activities: this.activities,
             ribbons: this.ribbons,
+            allowAttendeeEdits: this.allowAttendeeEdits !== false,
             location: this.location,
             description: this.description,
             createdAt: this.createdAt,
@@ -51,6 +55,7 @@ class Event {
             start_date: this.startDate || null,
             activities: this.activities ? JSON.stringify(this.activities) : null,
             ribbons: this.ribbons && this.ribbons.length > 0 ? JSON.stringify(this.ribbons) : null,
+            allow_attendee_edits: this.allowAttendeeEdits === false ? 0 : 1,
             location: this.location,
             description: this.description && this.description.length > 0 ? JSON.stringify(this.description) : null,
             created_at: this.createdAt,
@@ -153,6 +158,7 @@ class Event {
             startDate: row.start_date || row.startDate,
             activities: activities,
             ribbons,
+            allowAttendeeEdits: row.allow_attendee_edits !== undefined ? Boolean(row.allow_attendee_edits) : true,
             location: row.location,
             description: (() => {
                 if (!row.description)

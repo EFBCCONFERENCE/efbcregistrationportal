@@ -30,6 +30,7 @@ export interface Event {
   startDate?: string; // Start date
   activities?: Array<{ name: string; seatLimit?: number }> | string[]; // Support both formats for backward compatibility
   ribbons?: string[];
+  allowAttendeeEdits?: boolean;
   location?: string;
   description?: string | string[];
   createdAt?: string;
@@ -198,6 +199,7 @@ export interface CreateEventRequest {
   startDate?: string; // Start date
   activities?: Array<{ name: string; seatLimit?: number }> | string[];
   ribbons?: string[];
+  allowAttendeeEdits?: boolean;
   location?: string;
   description?: string | string[];
   spousePricing?: Array<{ label: string; price: number; startDate?: string; endDate?: string }>;

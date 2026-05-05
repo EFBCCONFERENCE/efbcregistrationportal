@@ -58,6 +58,7 @@ export const UserEvents: React.FC<UserEventsProps> = ({
           {events.map(event => {
             const userReg = userRegistrations.find(r => r.eventId === event.id);
             const isExpired = isEventExpired(event.date);
+            const attendeeEditsAllowed = event.allowAttendeeEdits !== false;
             
             return (
               <div key={event.id} className="card event-item">
@@ -84,12 +85,12 @@ export const UserEvents: React.FC<UserEventsProps> = ({
                       <div><strong>Category:</strong> {userReg.category}</div>
                     </div>
                     <div className="event-actions">
-                      {!isExpired && (
+                      {!isExpired && attendeeEditsAllowed && (
                         <>
-                      <button
-                        className="btn btn-primary"
-                        onClick={() => handleRegister(event)}
-                      >
+                          <button
+                            className="btn btn-primary"
+                            onClick={() => handleRegister(event)}
+                          >
                             Edit
                           </button>
                           <button
@@ -99,6 +100,9 @@ export const UserEvents: React.FC<UserEventsProps> = ({
                             Cancel
                           </button>
                         </>
+                      )}
+                      {!isExpired && !attendeeEditsAllowed && (
+                        <span className="event-status status-expired">Attendee edits closed</span>
                       )}
                     </div>
                   </div>

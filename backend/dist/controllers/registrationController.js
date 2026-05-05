@@ -629,6 +629,21 @@ class RegistrationController {
                 res.status(403).json({ success: false, error: 'You can only update your own registration' });
                 return;
             }
+            if (!isAdminForActivity) {
+                const eventRow = await this.db.findById('events', Number(existingRow.event_id));
+                const allowAttendeeEdits = eventRow
+                    ? (eventRow.allow_attendee_edits === undefined
+                        ? true
+                        : Boolean(eventRow.allow_attendee_edits))
+                    : true;
+                if (!allowAttendeeEdits) {
+                    res.status(403).json({
+                        success: false,
+                        error: 'Registration updates are closed for this event. Please contact an administrator.',
+                    });
+                    return;
+                }
+            }
             const existingActivity = String(existingRow.wednesday_activity ?? '').trim();
             const incomingActivity = updateData.wednesdayActivity !== undefined
                 ? String(updateData.wednesdayActivity ?? '').trim()

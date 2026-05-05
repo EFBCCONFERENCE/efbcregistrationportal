@@ -29,6 +29,7 @@ export interface Event {
         seatLimit?: number;
     }> | string[];
     ribbons?: string[];
+    allowAttendeeEdits?: boolean;
     location?: string;
     description?: string | string[];
     createdAt?: string;
@@ -177,6 +178,7 @@ export interface CreateEventRequest {
         seatLimit?: number;
     }> | string[];
     ribbons?: string[];
+    allowAttendeeEdits?: boolean;
     location?: string;
     description?: string | string[];
     spousePricing?: Array<{

@@ -297,6 +297,7 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
   );
 
   const isEditing = !!registration;
+  const attendeeEditLocked = isEditing && !isAdminEdit && event?.allowAttendeeEdits === false;
   const isAlreadyPaid = !!(registration as any)?.paid;
   const hadSpouseTicket = toBooleanYesNo((registration as any)?.spouseDinnerTicket);
   const hadSpousePayment = !!(registration as any)?.spousePaymentId;
@@ -1104,6 +1105,11 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!event) return;
+
+    if (attendeeEditLocked) {
+      alert('Registration updates are closed for this event. Please contact an administrator.');
+      return;
+    }
     
     // Prevent unchecking spouse ticket if payment was made
     if (hadSpousePayment && !formData.spouseDinnerTicket) {
@@ -2555,6 +2561,11 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
 
       <div className="card" style={{ padding: '1rem' }}>
         <form id="registration-form" onSubmit={handleSubmit} className="registration-form" noValidate>
+          {attendeeEditLocked && (
+            <div className="status-message status-warning" style={{ marginBottom: '1rem' }}>
+              Registration updates are closed for attendees. Please contact an administrator for any changes.
+            </div>
+          )}
           <div className="form-section">
             <h3 className="section-title">Registration Information</h3>
             <div className="pricing-info">
@@ -4275,6 +4286,14 @@ export const UserRegistration: React.FC<UserRegistrationProps> = ({
           <div className="modal-footer-actions" style={{ marginTop: '1rem' }}>
             <button type="button" className="btn btn-secondary" onClick={onBack} disabled={isSubmitting}>Cancel</button>
             {(() => {
+              if (attendeeEditLocked) {
+                return (
+                  <button className="btn btn-primary btn-save" type="button" disabled>
+                    Updates Closed
+                  </button>
+                );
+              }
+
               const paymentMethod = formData.paymentMethod || 'Card';
               const isAddingSpouse = isEditing && !hadSpouseTicket && formData.spouseDinnerTicket && !hadSpousePayment;
               const isAddingKids = isEditing && kids.length > originalKidsCount;

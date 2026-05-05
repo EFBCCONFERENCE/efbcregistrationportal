@@ -94,6 +94,7 @@ const createTables = async () => {
         start_date DATE NULL,
         activities JSON,
         ribbons JSON,
+        allow_attendee_edits BOOLEAN NOT NULL DEFAULT TRUE,
         location VARCHAR(500),
         description TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -168,6 +169,7 @@ const createTables = async () => {
         await migrateTierTracking();
         await migrateUpdateNotes();
         await migrateRibbonsFeature();
+        await migrateEventEditPolicy();
         await databaseService.query(`
       CREATE TABLE IF NOT EXISTS \`activity_groups\` (
         id INT PRIMARY KEY AUTO_INCREMENT,
@@ -546,6 +548,23 @@ const migrateRibbonsFeature = async () => {
     }
     catch (error) {
         console.error('Error migrating ribbons feature:', error);
+    }
+};
+const migrateEventEditPolicy = async () => {
+    try {
+        const dbNameRows = await databaseService.query('SELECT DATABASE() as db');
+        const dbName = dbNameRows[0]?.db;
+        if (!dbName)
+            return;
+        const eventCols = await databaseService.query('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?', [dbName, 'events']);
+        const hasAllowAttendeeEdits = eventCols.some((c) => c.COLUMN_NAME === 'allow_attendee_edits');
+        if (!hasAllowAttendeeEdits) {
+            await databaseService.query('ALTER TABLE `events` ADD COLUMN `allow_attendee_edits` BOOLEAN NOT NULL DEFAULT TRUE AFTER `ribbons`');
+            console.log('🛠️ Added events.allow_attendee_edits column');
+        }
+    }
+    catch (error) {
+        console.error('Error migrating event edit policy:', error?.message || error);
     }
 };
 const migrateChildLunchFeature = async () => {

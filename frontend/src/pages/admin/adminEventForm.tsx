@@ -30,6 +30,7 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
   // Activities state: Fixed to use object array format for type safety (supports both old string[] and new object[] formats)
   const [activities, setActivities] = useState<Array<{ name: string; seatLimit?: number }>>([]);
   const [ribbons, setRibbons] = useState<string[]>([]);
+  const [allowAttendeeEdits, setAllowAttendeeEdits] = useState(true);
   const [newActivity, setNewActivity] = useState('');
   const [newRibbon, setNewRibbon] = useState('');
   const [newActivitySeatLimit, setNewActivitySeatLimit] = useState<number | ''>('');
@@ -86,6 +87,7 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
     // IMPORTANT: This fix resolves the TypeScript compilation error for activities initialization
     setActivities(normalizeActivities(event.activities));
     setRibbons(normalizeRibbons(event.ribbons));
+    setAllowAttendeeEdits(event.allowAttendeeEdits !== false);
     setRegistrationPricing(event.registrationPricing || registrationPricing);
     setSpousePricing(event.spousePricing && event.spousePricing.length ? event.spousePricing : spousePricing);
     setKidsPricing(event.kidsPricing && event.kidsPricing.length ? (event.kidsPricing as KidsPricingTier[]) : kidsPricing);
@@ -283,6 +285,7 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
         description: descriptionArray,
         activities,
         ribbons,
+        allowAttendeeEdits,
         registrationPricing,
         spousePricing,
         kidsPricing,
@@ -479,6 +482,22 @@ export const AdminEventForm: React.FC<AdminEventFormProps> = ({ event, onCancel,
             </div>
 
  
+            <div className="form-group">
+              <label className="form-label">Attendee Edit Access</label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  checked={allowAttendeeEdits}
+                  onChange={(e) => setAllowAttendeeEdits(e.target.checked)}
+                  disabled={isSubmitting}
+                />
+                Allow attendees to update existing registrations
+              </label>
+              <small className="form-hint" style={{ display: 'block', marginTop: '0.4rem' }}>
+                Turn this off before the conference to freeze attendee edits while still allowing admins to edit.
+              </small>
+            </div>
+
             <div className="form-group">
               <label className="form-label">Registration Pricing Tiers</label>
               <div className="pricing-tiers">
